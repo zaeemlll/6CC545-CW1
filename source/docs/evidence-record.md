@@ -2,7 +2,7 @@
 
 **Student number:** 100874830
 **Week:** 01
-**Repository URL:** Not created yet
+**Repository URL:** https://github.com/zaeemlll/6CC545-CW1
 **Immutable tag:** week01
 **Commit hash:** 668916074295da3bf61f1784a89ba14838002435
 **Go version / OS:** go1.27.1 darwin/amd64; macOS Darwin 23.5.0 x86_64
