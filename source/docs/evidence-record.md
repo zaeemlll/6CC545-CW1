@@ -44,6 +44,8 @@ The targeted Week 1 configuration tests passed, including `TestWeek01_Config` an
 
 **Week:** Week 2
 
+**Repository URL:** https://github.com/zaeemlll/6CC545-CW1.git
+
 **Immutable tag:** `week02` (will identify the completed Week 2 checkpoint)
 
 **Implementation commit hash:** `d4d10e29e5c65af1fa8bfeb08655b5edea7e68cf`
@@ -85,3 +87,60 @@ The API is intended for local coursework testing and does not include authentica
 ## Sources and AI assistance
 
 The Week 2 student workbook and relevant Go documentation were used. ChatGPT assisted with explanations and implementation troubleshooting. The tests and live HTTP requests were run to check the implementation.
+
+
+
+
+# Week 3 evidence record
+
+**Student number:** 100874830
+
+**Week:** Week 3
+
+**Repository URL:** https://github.com/zaeemlll/6CC545-CW1.git
+
+**Checkpoint tag:** `week03` (to be created after final verification)
+
+**Implementation commit hash:** To be added after the implementation commit.
+
+**Go version / OS:** `go1.27.1 darwin/amd64`
+
+## Commands actually executed
+
+- `go test ./internal/model -count=1`
+- `go test ./internal/state -run '^TestWeek03_Registry$' -v -count=1`
+- `go test ./internal/state -run '^TestWeek03_ConcurrentRegistry$' -v -count=1`
+- `go test ./internal/state -run '^TestWeek03_InvalidPeer$' -v -count=1`
+- `go test ./internal/state -run '^TestWeek03_Catalog$' -v -count=1`
+- `go test ./internal/httpapi -run '^TestWeek03_PeerAPI$' -v -count=1`
+- `go test ./... -count=1 -timeout 20s`
+- `go vet ./...`
+- `go test -race ./... -count=1 -timeout 30s`
+- `sh -n scripts/run-node-a.sh`
+- `sh -n scripts/run-node-b.sh`
+
+## Observed results
+
+- Model, registry, catalogue, and peer API tests passed.
+- The full test suite passed, including the race detector.
+- `go vet` reported no problems.
+- Both node startup scripts passed shell syntax checks.
+- Node A and Node B returned HTTP 200 from `/v1/files`.
+- Registering Node B returned HTTP 201; repeating the registration returned HTTP 409 with `duplicate_peer`.
+- `/v1/peers` listed the registered peer, and `/v1/status` continued to return `healthy`.
+
+## Failure case and diagnosis
+
+Registering the same peer ID twice returned HTTP 409 Conflict with `{"error":"duplicate_peer"}`. This is expected behaviour because peer IDs must be unique.
+
+## Design decision and alternative
+
+The peer registry uses a map protected by `sync.RWMutex` so concurrent requests can safely read and add peers. The catalogue validates replacement data before updating its stored list, so invalid data does not replace the existing catalogue. An alternative would be to use a separate database, but an in-memory structure is sufficient for this checkpoint.
+
+## Remaining limitations
+
+Peer registration stores peer information but does not confirm that the peer is reachable. The catalogue stores metadata, not file contents, and the service has no authentication. It is intended for local coursework testing on loopback addresses.
+
+## Sources and AI assistance
+
+Used the Week 3 student workbook, supplied coursework scaffold, and Go documentation. ChatGPT assisted with explanations and troubleshooting. I ran the commands and checked the observed results.
