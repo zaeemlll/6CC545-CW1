@@ -101,7 +101,7 @@ The Week 2 student workbook and relevant Go documentation were used. ChatGPT ass
 
 **Checkpoint tag:** `week03` (to be created after final verification)
 
-**Implementation commit hash:** To be added after the implementation commit.
+**Implementation commit hash:** `019be06a7053a9d635a1ec4d860ca620f41f893e`
 
 **Go version / OS:** `go1.27.1 darwin/amd64`
 
