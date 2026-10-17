@@ -44,9 +44,9 @@ The targeted Week 1 configuration tests passed, including `TestWeek01_Config` an
 
 **Week:** Week 2
 
-**Repository URL:** https://github.com/zaeemlll/6CC545-CW1.git
+**Immutable tag:** `week02` (will identify the completed Week 2 checkpoint)
 
-**Immutable tag:** `week02` *(add after creating the tag)*
+**Implementation commit hash:** `d4d10e29e5c65af1fa8bfeb08655b5edea7e68cf`
 
 **Commit hash:** *Add the final Week 2 checkpoint commit hash.*
 
