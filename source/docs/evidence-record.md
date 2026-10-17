@@ -107,6 +107,7 @@ The Week 2 student workbook and relevant Go documentation were used. ChatGPT ass
 
 ## Commands actually executed
 
+- `go test ./internal/state -run '^TestWeek03_' -v -count=1`
 - `go test ./internal/model -count=1`
 - `go test ./internal/state -run '^TestWeek03_Registry$' -v -count=1`
 - `go test ./internal/state -run '^TestWeek03_ConcurrentRegistry$' -v -count=1`
@@ -121,6 +122,8 @@ The Week 2 student workbook and relevant Go documentation were used. ChatGPT ass
 
 ## Observed results
 
+- The same-peer concurrency test passed: out of 50 concurrent attempts to register the same peer ID, exactly one succeeded and 49 returned duplicate errors.
+- The architecture diagram shows Node A and Node B as separate processes with separate in-memory registries and catalogues.
 - Model, registry, catalogue, and peer API tests passed.
 - The full test suite passed, including the race detector.
 - `go vet` reported no problems.

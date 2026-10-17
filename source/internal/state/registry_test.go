@@ -48,6 +48,53 @@ func TestWeek03_ConcurrentRegistry(t *testing.T) {
 		t.Fatalf("want 50 peers, got %d", n)
 	}
 }
+
+func TestWeek03_ConcurrentSamePeer(t *testing.T) {
+	s := NewRegistry()
+
+	const writers = 50
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	successes := 0
+	duplicates := 0
+	unexpected := 0
+
+	wg.Add(writers)
+	for i := 0; i < writers; i++ {
+		go func() {
+			defer wg.Done()
+
+			err := s.Add(peer("same-peer"))
+
+			mu.Lock()
+			defer mu.Unlock()
+
+			switch {
+			case err == nil:
+				successes++
+			case errors.Is(err, ErrDuplicate):
+				duplicates++
+			default:
+				unexpected++
+			}
+		}()
+	}
+
+	wg.Wait()
+
+	if successes != 1 {
+		t.Errorf("want exactly 1 success, got %d", successes)
+	}
+	if duplicates != writers-1 {
+		t.Errorf("want %d duplicate errors, got %d", writers-1, duplicates)
+	}
+	if unexpected != 0 {
+		t.Errorf("want 0 unexpected errors, got %d", unexpected)
+	}
+	if got := len(s.Snapshot()); got != 1 {
+		t.Errorf("want 1 stored peer, got %d", got)
+	}
+}
 func TestWeek03_InvalidPeer(t *testing.T) {
 	s := NewRegistry()
 	p := peer("x")

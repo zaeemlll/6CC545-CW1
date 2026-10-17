@@ -6,6 +6,57 @@ Week 3 extends the existing Go application with peer registration and file metad
 
 Node A uses the loopback HTTP address `127.0.0.1:8081`. Node B uses `127.0.0.1:8082`.
 
+
+## Architecture diagram
+
+The diagram shows the arrangement inside each node. Node A and Node B are separate processes, so their registries and catalogues are not shared.
+
+```mermaid
+flowchart TB
+    subgraph A["Node A process — 127.0.0.1:8081"]
+        AC["CLI configuration"]
+        AA["Application composition"]
+        AH["HTTP handlers"]
+        AS["Status state"]
+        AR["Peer registry — owns Node A peer map"]
+        AP["Peer model — validation"]
+        AF["File catalogue — owns Node A metadata"]
+        AM["File-metadata model — validation"]
+
+        AC --> AA
+        AA --> AH
+        AH -->|"GET / POST"| AS
+        AH -->|"Add / Snapshot / Get"| AR
+        AR --> AP
+        AH -->|"Snapshot"| AF
+        AF --> AM
+    end
+
+    subgraph B["Node B process — 127.0.0.1:8082"]
+        BC["CLI configuration"]
+        BA["Application composition"]
+        BH["HTTP handlers"]
+        BS["Status state"]
+        BR["Peer registry — owns Node B peer map"]
+        BP["Peer model — validation"]
+        BF["File catalogue — owns Node B metadata"]
+        BM["File-metadata model — validation"]
+
+        BC --> BA
+        BA --> BH
+        BH -->|"GET / POST"| BS
+        BH -->|"Add / Snapshot / Get"| BR
+        BR --> BP
+        BH -->|"Snapshot"| BF
+        BF --> BM
+    end
+
+    A -. "No shared in-memory collections" .- B
+```
+
+Each process owns its own mutable state. The registry protects its peer map with a lock, while the catalogue protects its metadata collection with a lock. HTTP handlers access this state through the registry and catalogue methods.
+
+
 ## 2. Main components
 
 - `internal/model`: Defines and validates peer and file metadata.
