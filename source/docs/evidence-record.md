@@ -46,7 +46,7 @@ The targeted Week 1 configuration tests passed, including `TestWeek01_Config` an
 
 **Repository URL:** https://github.com/zaeemlll/6CC545-CW1.git
 
-**Immutable tag:** `week02` (will identify the completed Week 2 checkpoint)
+**Immutable tag:** `week02`
 
 **Implementation commit hash:** `d4d10e29e5c65af1fa8bfeb08655b5edea7e68cf`
 
@@ -99,7 +99,7 @@ The Week 2 student workbook and relevant Go documentation were used. ChatGPT ass
 
 **Repository URL:** https://github.com/zaeemlll/6CC545-CW1.git
 
-**Checkpoint tag:** `week03` (to be created after final verification)
+**Checkpoint tag:** `week03`
 
 **Implementation commit hash:** `019be06a7053a9d635a1ec4d860ca620f41f893e`
 
