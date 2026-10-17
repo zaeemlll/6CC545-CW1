@@ -34,4 +34,4 @@ The targeted Week 1 configuration tests passed: `TestWeek01_Config` and `TestWee
 
 The full configuration package test run also passed. It included `TestSmoke_ParseHelp`, `TestWeek01_Config`, and `TestWeek01_UnknownFlag`.
 
-A separate check for `TestWeek01_InvalidOptionalAddress` returned `PASS` but reported that there
+The targeted Week 1 configuration tests passed, including `TestWeek01_Config` and `TestWeek01_UnknownFlag`. A separate check for `TestWeek01_InvalidOptionalAddress` reported that there were no matching tests to run, so it is not recorded as a passed test.
