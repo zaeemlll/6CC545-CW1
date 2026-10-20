@@ -7,4 +7,5 @@ exec ./bin/node -id node-a \
   -http 127.0.0.1:8081 \
   -tcp 127.0.0.1:7001 \
   -udp 127.0.0.1:7101 \
+  -grpc 127.0.0.1:9091 \
   -seed testdata/node-a-files.json

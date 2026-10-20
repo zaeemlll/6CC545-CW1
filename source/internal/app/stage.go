@@ -11,6 +11,11 @@ import (
 	"net/http"
 	"os"
 	"sync"
+	"time"
+
+	pb "example.edu/6cc545/cw1/api/files/v1"
+	"example.edu/6cc545/cw1/internal/rpcfiles"
+	"google.golang.org/grpc"
 
 	"example.edu/6cc545/cw1/internal/config"
 	"example.edu/6cc545/cw1/internal/httpapi"
@@ -20,9 +25,6 @@ import (
 )
 
 func CheckStage(c config.Config) error {
-	if c.GRPC != "" {
-		return errors.New("Week 5: gRPC is not enabled yet")
-	}
 	return nil
 }
 
@@ -67,6 +69,7 @@ func Wire(ctx context.Context, c config.Config, mux *http.ServeMux) (func(), err
 
 	var tcpListener net.Listener
 	var udpConn *net.UDPConn
+	var grpcListener net.Listener
 
 	if c.TCP != "" {
 		ln, err := net.Listen("tcp", c.TCP)
@@ -95,24 +98,82 @@ func Wire(ctx context.Context, c config.Config, mux *http.ServeMux) (func(), err
 		udpConn = conn
 	}
 
-	mux.HandleFunc("/v1/status", httpapi.StatusResource(status))
-	mux.HandleFunc("/v1/peers", httpapi.Peers(registry))
-	mux.HandleFunc("/v1/files", httpapi.Files(catalog))
-	mux.HandleFunc("/v1/messages", httpapi.Messages(inbox))
-
-	runCtx, cancel := context.WithCancel(ctx)
-	var wg sync.WaitGroup
-	var stopOnce sync.Once
-
-	stop := func() {
-		stopOnce.Do(func() {
-			cancel()
+	if c.GRPC != "" {
+		ln, err := net.Listen("tcp", c.GRPC)
+		if err != nil {
 			if tcpListener != nil {
 				_ = tcpListener.Close()
 			}
 			if udpConn != nil {
 				_ = udpConn.Close()
 			}
+			return nil, fmt.Errorf("listen gRPC %s: %w", c.GRPC, err)
+		}
+		grpcListener = ln
+	}
+
+	mux.HandleFunc("/v1/status", httpapi.StatusResource(status))
+	mux.HandleFunc("/v1/peers", httpapi.Peers(registry))
+	mux.HandleFunc("/v1/files", httpapi.Files(catalog))
+	mux.HandleFunc("/v1/messages", httpapi.Messages(inbox))
+	mux.HandleFunc("/v1/remote-files", httpapi.RemoteFiles(registry, c.ID, c.Timeout))
+
+	runCtx, cancel := context.WithCancel(ctx)
+	var wg sync.WaitGroup
+	var stopOnce sync.Once
+
+	var grpcServer *grpc.Server
+	var grpcDone chan struct{}
+
+	if grpcListener != nil {
+		grpcServer = grpc.NewServer(
+			grpc.MaxRecvMsgSize(4096),
+			grpc.MaxSendMsgSize(65536),
+		)
+		pb.RegisterFileServiceServer(grpcServer, &rpcfiles.Service{
+			NodeID:  c.ID,
+			Catalog: catalog,
+		})
+
+		grpcDone = make(chan struct{})
+		go func() {
+			defer close(grpcDone)
+			if err := grpcServer.Serve(grpcListener); err != nil && runCtx.Err() == nil {
+				log.Printf("gRPC server stopped: %v", err)
+			}
+		}()
+		log.Printf("node=%s grpc=%s ready", c.ID, grpcListener.Addr())
+	}
+
+	stop := func() {
+		stopOnce.Do(func() {
+			cancel()
+
+			if tcpListener != nil {
+				_ = tcpListener.Close()
+			}
+			if udpConn != nil {
+				_ = udpConn.Close()
+			}
+
+			if grpcServer != nil {
+				stopped := make(chan struct{})
+				go func() {
+					grpcServer.GracefulStop()
+					close(stopped)
+				}()
+
+				select {
+				case <-stopped:
+				case <-time.After(c.Timeout):
+					grpcServer.Stop()
+					<-stopped
+				}
+
+				_ = grpcListener.Close()
+				<-grpcDone
+			}
+
 			wg.Wait()
 		})
 	}
@@ -121,7 +182,7 @@ func Wire(ctx context.Context, c config.Config, mux *http.ServeMux) (func(), err
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if err := ipc.ServeTCP(runCtx, tcpListener, c.ID, c.Timeout, inbox.Record); err != nil {
+			if err := ipc.ServeTCP(runCtx, tcpListener, c.ID, c.Timeout, inbox.Record); err != nil && runCtx.Err() == nil {
 				log.Printf("TCP server stopped: %v", err)
 			}
 		}()
@@ -132,7 +193,7 @@ func Wire(ctx context.Context, c config.Config, mux *http.ServeMux) (func(), err
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if err := ipc.ServeUDP(runCtx, udpConn, c.ID, c.Timeout, inbox.Record); err != nil {
+			if err := ipc.ServeUDP(runCtx, udpConn, c.ID, c.Timeout, inbox.Record); err != nil && runCtx.Err() == nil {
 				log.Printf("UDP server stopped: %v", err)
 			}
 		}()
