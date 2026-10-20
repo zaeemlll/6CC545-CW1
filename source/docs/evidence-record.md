@@ -156,9 +156,9 @@ Used the Week 3 student workbook, supplied coursework scaffold, and Go documenta
 
 **Repository URL:** https://github.com/zaeemlll/6CC545-CW1.git
 
-**Checkpoint tag:** To be recorded after the Week 4 commit and tag are created.
+**Checkpoint tag:** `week04` (to be created after verification).
 
-**Implementation commit hash:** To be recorded after the Week 4 commit is created.
+**Implementation commit hash:** `71499ae4952ae27b4d76c571961e8132c161ef58`
 
 **Go version / OS:** `go1.27.1 darwin/amd64`
 
