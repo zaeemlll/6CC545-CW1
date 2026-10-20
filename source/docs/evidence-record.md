@@ -109,7 +109,7 @@ The API is intended for local coursework testing and does not include authentica
 
 ## Sources and AI assistance
 
-The Week 2 student workbook and relevant Go documentation were used. ChatGPT assisted with explanations and implementation troubleshooting. The tests and live HTTP requests were run to check the implementation, and the observed results were recorded in the project evidence.
+I have consulted with RFC 9110 for HTTP semantics and the OWASP REST Security Cheat Sheet for API security guidance. However, AI has provided me with partial support to review the content of this week.
 
 
 
