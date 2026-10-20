@@ -205,9 +205,9 @@ Used the Week 4 coursework guidance, supplied project scaffold, and Go documenta
 
 **Repository URL:** https://github.com/zaeemlll/6CC545-CW1.git
 
-**Checkpoint tag:** Pending final verification and commit.
+**Checkpoint tag:** `week05`.
 
-**Commit hash:** Pending.
+**Implementation commit hash:** `4ae1cae`.
 
 **Go version / OS:** `go1.27.1 darwin/amd64`
 
