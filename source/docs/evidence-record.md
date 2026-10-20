@@ -30,12 +30,33 @@
 
 ## Observed results
 
-The targeted Week 1 configuration tests passed: `TestWeek01_Config` and `TestWeek01_UnknownFlag`.
+- The targeted Week 1 configuration tests passed. These included `TestWeek01_Config` and `TestWeek01_UnknownFlag`.
+- The full configuration package test run also passed. It included `TestSmoke_ParseHelp`, `TestWeek01_Config` and `TestWeek01_UnknownFlag`.
+- The test for `TestWeek01_InvalidOptionalAddress` did not run because no matching test was found. I have not recorded it as a passed test.
+- The full project test run passed, and `go vet ./...` completed without reporting problems.
+- Requests to the health endpoints on Node A (`127.0.0.1:8081`) and Node B (`127.0.0.1:8082`) returned HTTP 200, according to the recorded results.
 
-The full configuration package test run also passed. It included `TestSmoke_ParseHelp`, `TestWeek01_Config`, and `TestWeek01_UnknownFlag`.
+## Failure case and diagnosis
 
-The targeted Week 1 configuration tests passed, including `TestWeek01_Config` and `TestWeek01_UnknownFlag`. A separate check for `TestWeek01_InvalidOptionalAddress` reported that there were no matching tests to run, so it is not recorded as a passed test.
+The configuration checks do not check whether a port is already in use. When the server tries to use a port that another process is using, the operating system returns an error and the server cannot start on that address. This means the configuration can pass its checks but the server can still fail to start.
 
+## Design decision and alternative
+
+The code keeps configuration checks, HTTP request handling, and server startup and shutdown in separate components. This makes the code easier to understand, test and maintain. Command-line flags allow the same program to run as different nodes, each with its own ID, HTTP address and shutdown timeout.
+
+The configuration checks validate the node ID, loopback IP address, port range and shutdown timeout before the server starts. The `/healthz` endpoint returns the node ID and an `ok` status in JSON. It accepts GET requests, returns `405 Method Not Allowed` with an `Allow: GET` header for other methods, and returns `404 Not Found` for unknown paths.
+
+One alternative would be to put the configuration checks, HTTP handling and startup code into one component. I chose to keep them separate because this makes each part easier to test and update.
+
+## Remaining limitations
+
+The health endpoint only checks whether the local HTTP handler responds. It does not show whether the complete distributed service is working. The server uses a loopback address by default, which limits access from other machines. However, it does not provide authentication or encryption, so other programs on the same computer may still access it.
+
+The server also supports graceful shutdown, but the result depends on the timeout setting and how long active requests take to finish. If the timeout expires too early, some requests may not finish. The current implementation provides basic node configuration and health monitoring, but it does not yet support communication between nodes or manage shared state. More work is needed to add these features and suitable security measures.
+
+## Sources and AI-use disclosure
+
+I have consulted the official Go documentation on command line flags, HTTP servers and graceful shutdown. I have also got partial support from artificial intelligence.
 
 
 # Week 2 evidence record
