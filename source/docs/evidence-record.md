@@ -59,7 +59,7 @@ The server also supports graceful shutdown, but the result depends on the timeou
 I have consulted the official Go documentation on command line flags, HTTP servers and graceful shutdown. I have also got partial support from artificial intelligence.
 
 
-# Week 2 evidence record
+# Week 2 Evidence Record
 
 **Student number:** 100874830
 
@@ -69,9 +69,7 @@ I have consulted the official Go documentation on command line flags, HTTP serve
 
 **Immutable tag:** `week02`
 
-**Implementation commit hash:** `d4d10e29e5c65af1fa8bfeb08655b5edea7e68cf`
-
-**Commit hash:** *Add the final Week 2 checkpoint commit hash.*
+**Commit hash:** `d4d10e29e5c65af1fa8bfeb08655b5edea7e68cf`
 
 **Go version / OS:** `go1.27.1 darwin/amd64`
 
@@ -80,34 +78,39 @@ I have consulted the official Go documentation on command line flags, HTTP serve
 - `go test ./internal/httpapi -run '^TestWeek02_' -v -count=1`
 - `go test ./... -count=1 -timeout 20s`
 - `go vet ./...`
-- Live HTTP requests to test GET and POST `/v1/status` and GET `/healthz`.
+- Live HTTP GET and POST requests to `/v1/status`.
+- A live HTTP GET request to `/healthz`.
+- A request containing malformed JSON to test input validation.
 
 ## Observed results
 
-- All Week 2 HTTP API tests passed, including the exact 4096-byte request-body limit test.
+- All targeted Week 2 HTTP API tests passed, including the exact 4096-byte request-body limit test.
 - The complete Go test suite passed.
-- `go vet ./...` completed without reported problems.
-- GET `/v1/status` returned HTTP 200 with `{"status":"healthy"}` initially.
-- POST updated the status to `degraded`, and a subsequent GET returned the updated status.
+- `go vet ./...` completed without reporting problems.
+- An initial GET request to `/v1/status` returned HTTP 200 with `{"status":"healthy"}`.
+- A POST request updated the status to `degraded`, and a subsequent GET returned the updated status.
 - Malformed JSON returned HTTP 400 with `{"error":"invalid_json"}`.
-- A GET after the invalid request confirmed the stored status remained `degraded`.
+- A subsequent GET confirmed that the stored status remained `degraded` after the invalid request.
 - GET `/healthz` continued to return HTTP 200.
 
 ## Failure case and diagnosis
 
-Malformed JSON was rejected with HTTP 400. The stored status did not change because the request was rejected before the update was applied.
+A request containing malformed JSON was rejected with HTTP 400 and the error `invalid_json`. The request was rejected before the status update was applied, so the previously stored status remained `degraded`. This demonstrates that the API validates JSON input before modifying the stored status.
 
 ## Design decision and alternative
 
-The status is stored in a concurrency-safe state object. Requests are checked for the correct media type, body-size limit and valid JSON before the status is updated. An alternative would be to accept requests without these checks, but that could allow invalid input to reach the application.
+The REST interface uses HTTP methods and JSON to exchange data between clients and a node. The status is stored in a concurrency-safe state object. Requests are checked for the appropriate content type, body-size limit and valid JSON before the status is updated. This helps prevent invalid requests from modifying application state and supports safe access to shared status data.
+
+An alternative would be to accept requests without validating their content or to use a different data format. However, accepting unvalidated input could allow malformed or unsuitable data to reach the application. JSON was chosen because it is readable and widely supported by HTTP clients.
 
 ## Remaining limitations
 
-The API is intended for local coursework testing and does not include authentication. Duplicate JSON keys are not explicitly rejected.
+The API is intended for local coursework testing and does not include authentication or encryption. Consequently, it would need additional security measures before being exposed to an untrusted network. Request validation improves reliability but does not protect against every form of misuse. Duplicate JSON keys are not explicitly rejected. The status is stored in memory, so it is not persistent across application restarts.
 
 ## Sources and AI assistance
 
-The Week 2 student workbook and relevant Go documentation were used. ChatGPT assisted with explanations and implementation troubleshooting. The tests and live HTTP requests were run to check the implementation.
+The Week 2 student workbook and relevant Go documentation were used. ChatGPT assisted with explanations and implementation troubleshooting. The tests and live HTTP requests were run to check the implementation, and the observed results were recorded in the project evidence.
+
 
 
 
