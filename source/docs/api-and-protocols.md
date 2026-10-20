@@ -118,3 +118,105 @@ The Week 2 targeted REST tests, exact-body-limit test, full Go test suite,
 and `go vet` were run during development. Live requests to Node A returned
 HTTP 200 for GET and a valid POST. A malformed POST returned HTTP 400,
 and a subsequent GET confirmed that the status remained `degraded`.
+
+## Week 4 — TCP and UDP Inter-Node Messaging
+
+### Purpose
+
+Each node exposes TCP and UDP listeners so nodes can exchange validated
+messages. Accepted incoming messages are kept in a bounded in-memory inbox
+and can be read through `GET /v1/messages`.
+
+The service is intended for local coursework demonstrations. It binds to
+loopback addresses in the supplied run scripts and has no authentication.
+
+### Message format
+
+Messages use JSON with these fields:
+
+| Field | Meaning |
+|---|---|
+| `version` | Protocol version; currently `1` |
+| `request_id` | Identifier for the individual request |
+| `node_id` | Identifier of the sending node |
+| `text` | Message text, containing 1–512 bytes of valid UTF-8 |
+
+Messages are rejected if the protocol version, identifiers, text, or encoded
+size is invalid. Encoded messages are limited to 4096 bytes. JSON decoding
+rejects unknown fields and additional JSON values.
+
+### TCP framing
+
+TCP is a byte stream, so each message is framed with a four-byte unsigned
+big-endian length followed by that many bytes of JSON. The receiver reads
+the full header and payload and rejects zero-length or oversized frames.
+This allows the receiver to handle fragmented reads without assuming that
+one network read corresponds to one complete message.
+
+### UDP transport
+
+UDP sends each encoded JSON message as a datagram. The receiver validates
+the datagram and returns an acknowledgement when it can process the message.
+UDP does not guarantee delivery, ordering, or retransmission. A sender may
+time out or receive a network error if the receiver is unavailable.
+
+### Acknowledgement
+
+A successful acknowledgement uses these JSON fields:
+
+| Field | Meaning |
+|---|---|
+| `version` | Protocol version |
+| `request_id` | Request identifier being acknowledged |
+| `receiver` | Identifier of the receiving node |
+| `accepted` | Whether the message was accepted |
+
+An acknowledgement indicates that the receiver accepted the message; it
+does not imply durable storage. The inbox is held in memory and is lost when
+the node process stops.
+
+### HTTP inbox endpoint
+
+`GET /v1/messages` returns the messages accepted by the node as a JSON array.
+The inbox retains a bounded recent history of up to 20 messages.
+
+Example request:
+
+    GET /v1/messages
+
+Example response:
+
+    HTTP 200
+    Content-Type: application/json; charset=utf-8
+
+    [{"version":1,"request_id":"tcp-1","node_id":"node-a","text":"hello"}]
+
+Only GET is supported by this endpoint. Other methods receive HTTP 405.
+
+### Demonstration ports
+
+| Node | HTTP | TCP | UDP |
+|---|---|---|---|
+| Node A | `127.0.0.1:8081` | `127.0.0.1:7001` | `127.0.0.1:7101` |
+| Node B | `127.0.0.1:8082` | `127.0.0.1:7002` | `127.0.0.1:7102` |
+
+### TCP and UDP comparison
+
+TCP provides a reliable, ordered byte stream while the connection remains
+usable, and this implementation adds explicit message framing. It is
+appropriate when complete, ordered delivery matters, but connection setup
+and stream handling add complexity.
+
+UDP preserves datagram boundaries and has lower transport overhead, but
+datagrams can be lost or duplicated and delivery is not guaranteed. This
+implementation uses request identifiers, acknowledgements, and deadlines
+to make outcomes observable; it does not implement automatic retries.
+
+### Verification evidence
+
+During the Week 4 demonstration, TCP and UDP messages were accepted in both
+directions between Node A and Node B. The `GET /v1/messages` endpoint returned
+HTTP 200 and showed the received messages. The targeted Week 4 IPC tests,
+full Go test suite, race detector, and `go vet ./...` completed successfully.
+When Node B was stopped, the TCP client reported connection refused; the UDP
+client also reported connection refused while waiting for a response.
