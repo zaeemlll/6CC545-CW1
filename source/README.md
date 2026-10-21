@@ -2,14 +2,15 @@
 
 ## Project overview
 
-This is my cumulative CW1 project for the 6CC545 Distributed Applications and Web Services module. The project is being developed in weekly stages.
+This is my cumulative CW1 project for the 6CC545 Distributed Applications and Web Services module. It is developed in weekly stages.
 
-The Week 1 implementation validates node configuration and provides an HTTP health endpoint that returns JSON. Two local nodes can run on separate ports so their responses can be checked independently.
+The project includes node configuration, HTTP health and status endpoints, peer registration, file metadata catalogues, TCP and UDP messaging, and gRPC communication using Protocol Buffers to request remote file metadata.
 
 ## Prerequisites
 
-- Go installed. The project declares a Go 1.23 language compatibility baseline.
-- A terminal with Bash for the supplied shell scripts.
+- Go 1.23 or later installed.
+- `protoc` and the Go protobuf generators for regenerating protobuf files.
+- A terminal with shell support for the supplied scripts.
 - macOS, Linux, or another operating system supported by Go.
 
 ## Build and test
@@ -17,50 +18,56 @@ The Week 1 implementation validates node configuration and provides an HTTP heal
 Run these commands from the source directory:
 
 ```bash
-cd ~/Downloads/6CC545-CW1/source
 go build ./...
-go test ./... -count=1 -timeout 20s
+go test ./... -count=1 -timeout 30s
 go vet ./...
 ```
 
-The recorded Week 1 test suite passed, and `go vet` completed without reporting issues.
+Run the project's full check script with:
+
+```bash
+sh scripts/check.sh
+```
 
 ## Run the nodes
 
-Open separate terminals.
+Open separate terminals for the nodes.
 
 **Node A — Terminal 1**
 
 ```bash
-cd ~/Downloads/6CC545-CW1/source
 sh scripts/run-node-a.sh
 ```
 
-**Node B — Terminal 3**
+**Node B — a separate terminal**
 
 ```bash
-cd ~/Downloads/6CC545-CW1/source
 sh scripts/run-node-b.sh
 ```
 
-Node A listens on `127.0.0.1:8081`. Node B listens on `127.0.0.1:8082`. Keep both services on loopback.
+Node A uses HTTP port `8081` and gRPC port `9091`. Node B uses HTTP port `8082` and gRPC port `9092`. Keep the services on loopback for local testing.
 
-## Check the health endpoint
+**Terminal 2 — testing**
 
-In Terminal 2, run:
+Use a separate terminal to run the supplied request commands and check the endpoints.
+
+For example:
 
 ```bash
-cd ~/Downloads/6CC545-CW1/source
 go run ./cmd/request -url http://127.0.0.1:8081/healthz
 go run ./cmd/request -url http://127.0.0.1:8082/healthz
 ```
 
-A successful request returns HTTP 200 and JSON containing the node ID and an `ok` status.
-
-To stop a node, press **Ctrl + C** in its terminal.
+A successful health request returns HTTP 200 and JSON containing the node ID and an `ok` status.
 
 ## Testing and limitations
 
-Week 1 checks cover configuration validation, health responses, invalid input, an unavailable port, and a duplicate-port failure.
+The project has tests for configuration, HTTP endpoints, peer and file metadata, messaging, and remote gRPC requests. The recorded Go test, race test, vet, module verification, and integration checks passed.
 
-These services are for local teaching and testing. They do not provide TLS or authentication. Do not expose them to other networks. Later weekly stages will extend this project.
+The remote file metadata endpoint depends on the selected peer being available. If a peer is unavailable, the API can return HTTP 503. The current project is intended for local teaching and testing and does not provide TLS or authentication. File metadata queries do not transfer the actual files.
+
+Press **Ctrl + C** in a node's terminal to stop that node.
+
+## Further documentation
+
+See the `docs/` directory for the weekly design notes, evidence record, and implementation log.
