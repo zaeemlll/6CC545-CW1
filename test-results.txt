@@ -1,0 +1,63 @@
+6CC545 CW1 - Test Results
+Date: Wed Oct 21 08:30:18 PKT 2026
+Student number: 100874830
+Repository: https://github.com/zaeemlll/6CC545-CW1.git
+
+===== GO VERSION =====
+go version go1.27.1 darwin/amd64
+
+===== PROJECT CHECK SCRIPT =====
+go version go1.27.1 darwin/amd64
+?   	example.edu/6cc545/cw1/api/files/v1	[no test files]
+?   	example.edu/6cc545/cw1/cmd/ipcclient	[no test files]
+?   	example.edu/6cc545/cw1/cmd/node	[no test files]
+?   	example.edu/6cc545/cw1/cmd/request	[no test files]
+ok  	example.edu/6cc545/cw1/examples/firstfunction	1.083s
+?   	example.edu/6cc545/cw1/examples/jsonmodel	[no test files]
+ok  	example.edu/6cc545/cw1/internal/app	2.403s
+ok  	example.edu/6cc545/cw1/internal/config	1.126s
+ok  	example.edu/6cc545/cw1/internal/httpapi	1.961s
+ok  	example.edu/6cc545/cw1/internal/ipc	1.687s
+ok  	example.edu/6cc545/cw1/internal/model	2.763s
+ok  	example.edu/6cc545/cw1/internal/rpcfiles	3.518s
+ok  	example.edu/6cc545/cw1/internal/state	3.089s
+Checks passed. This is not a mark or proof of complete test coverage.
+
+===== BUILD =====
+
+===== FULL TEST SUITE =====
+?   	example.edu/6cc545/cw1/api/files/v1	[no test files]
+?   	example.edu/6cc545/cw1/cmd/ipcclient	[no test files]
+?   	example.edu/6cc545/cw1/cmd/node	[no test files]
+?   	example.edu/6cc545/cw1/cmd/request	[no test files]
+ok  	example.edu/6cc545/cw1/examples/firstfunction	0.417s
+?   	example.edu/6cc545/cw1/examples/jsonmodel	[no test files]
+ok  	example.edu/6cc545/cw1/internal/app	0.497s
+ok  	example.edu/6cc545/cw1/internal/config	0.827s
+ok  	example.edu/6cc545/cw1/internal/httpapi	1.280s
+ok  	example.edu/6cc545/cw1/internal/ipc	2.473s
+ok  	example.edu/6cc545/cw1/internal/model	1.968s
+ok  	example.edu/6cc545/cw1/internal/rpcfiles	2.783s
+ok  	example.edu/6cc545/cw1/internal/state	1.626s
+
+===== RACE TESTS =====
+?   	example.edu/6cc545/cw1/api/files/v1	[no test files]
+?   	example.edu/6cc545/cw1/cmd/ipcclient	[no test files]
+?   	example.edu/6cc545/cw1/cmd/node	[no test files]
+?   	example.edu/6cc545/cw1/cmd/request	[no test files]
+ok  	example.edu/6cc545/cw1/examples/firstfunction	1.494s
+?   	example.edu/6cc545/cw1/examples/jsonmodel	[no test files]
+ok  	example.edu/6cc545/cw1/internal/app	1.674s
+ok  	example.edu/6cc545/cw1/internal/config	2.043s
+ok  	example.edu/6cc545/cw1/internal/httpapi	2.613s
+ok  	example.edu/6cc545/cw1/internal/ipc	4.113s
+ok  	example.edu/6cc545/cw1/internal/model	3.558s
+ok  	example.edu/6cc545/cw1/internal/rpcfiles	3.159s
+ok  	example.edu/6cc545/cw1/internal/state	4.374s
+
+===== GO VET =====
+
+===== MODULE VERIFICATION =====
+all modules verified
+
+===== GIT DIFF CHECK =====
