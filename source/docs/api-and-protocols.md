@@ -220,3 +220,67 @@ HTTP 200 and showed the received messages. The targeted Week 4 IPC tests,
 full Go test suite, race detector, and `go vet ./...` completed successfully.
 When Node B was stopped, the TCP client reported connection refused; the UDP
 client also reported connection refused while waiting for a response.
+
+## Week 5 — gRPC Remote File Metadata
+
+### Purpose
+
+The node provides a gRPC service for requesting file metadata from a
+remote node. The service uses Protocol Buffers to define the request,
+response, and remote procedure call (RPC). This gives the client and
+server a shared interface.
+
+### Service contract
+
+The service is defined in `api/files/v1/files.proto`.
+
+| Item | Definition |
+|---|---|
+| Service | `FileService` |
+| RPC method | `ListFiles` |
+| Request | `ListFilesRequest` |
+| Response | `ListFilesResponse` |
+| Request field | `requester_id` — string |
+| Response fields | `files` — repeated `FileMetadata`; `node_id` — string |
+
+Each `FileMetadata` message contains these fields:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `name` | string | File name |
+| `size` | int64 | File size |
+| `sha256` | string | SHA-256 checksum |
+| `modified_unix` | int64 | Modification time as a Unix timestamp |
+
+### Request and response
+
+The client calls `ListFiles` and sends a `ListFilesRequest` containing
+the requester ID. The server responds with a list of file metadata and
+the identity of the responding node.
+
+The metadata describes files; it does not transfer their contents.
+Protocol Buffers define the message structure, while gRPC provides the
+remote call between the client and server.
+
+### Error handling and limitations
+
+A remote call may fail if the server is unavailable or the request is
+cancelled. The client must handle these errors rather than assuming
+that every call will succeed. An empty file list is also a possible
+response and should be handled without treating it as a failure.
+
+The `requester_id` field is an unverified claim, not proof of identity.
+This coursework service does not provide authentication through that
+field. It is intended for a local teaching demonstration, not
+unprotected public deployment.
+
+### Verification
+
+The Week 5 tests cover successful remote listing, unavailable servers,
+cancelled requests, empty results, and request validation. The full Go
+test suite, race detector, and `go vet ./...` also completed successfully
+during development.
+
+For submission evidence, include the actual server and client commands
+and their observed output. Record any failure case and its observed
+result; do not use example output as if it were a real test transcript.
