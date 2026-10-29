@@ -1,5 +1,4 @@
 6CC545 CW1 - Test Results
-Date: Wed Oct 21 08:30:18 PKT 2026
 Student number: 100874830
 Repository: https://github.com/zaeemlll/6CC545-CW1.git
 
