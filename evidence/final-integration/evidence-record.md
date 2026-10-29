@@ -4,6 +4,10 @@
 
 **Repository URL:** https://github.com/zaeemlll/6CC545-CW1.git
 
+**Final submission tag:** `final-cw1`
+
+**Final tagged commit:** `e4f5f141c94a9b1e66b3189d05365619f9c50466`
+
 **Environment:** `go1.27.1 darwin/amd64`
 
 ## Commands actually executed
