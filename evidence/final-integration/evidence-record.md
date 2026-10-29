@@ -1,30 +1,45 @@
-# Final Integration Evidence Record
+# Final integration evidence
 
 **Student number:** 100874830
-**Repository:** https://github.com/zaeemlll/6CC545-CW1
-**Current integration commit recorded:** `9815ec6c5132d0f08468df0366ec494ced508489`
-**Final tag:** Not yet created
-**Environment recorded:** macOS 14.5, Go 1.27.1, darwin/amd64
 
-## Integrated scope
-The cumulative project includes:
-- Node configuration and `/healthz`.
-- JSON REST status operations at `/v1/status`.
-- Peer registration and local file metadata.
-- TCP and UDP messaging and the `/v1/messages` endpoint.
-- gRPC remote file metadata and `/v1/remote-files`.
+**Repository URL:** https://github.com/zaeemlll/6CC545-CW1.git
 
-## Recorded verification
-The existing `test-results.txt` records successful project checks, build, full Go tests, race tests, `go vet`, module verification and `git diff --check` on 21 October 2026. It reports that all modules were verified.
+**Environment:** `go1.27.1 darwin/amd64`
 
-## Failure cases previously recorded
-- Invalid JSON: HTTP 400.
-- Duplicate peer registration: HTTP 409.
-- Unavailable remote gRPC peer: HTTP 503 with `peer_unavailable`.
-- Stopped messaging peer: connection or response failure.
+## Commands actually executed
 
-## Remaining submission work
-The root evidence records have now been drafted, but they still need to be checked against the assessment brief and the original checkpoint evidence. The commentary PDF, root implementation log, required architecture artefact and final submission archive also need to be checked or completed. Do not create the `final-cw1` tag until the final snapshot is ready and verified.
+- `sh scripts/check.sh`
+- `go test -race ./... -count=1 -timeout 30s`
+- `go mod verify`
+- `git diff --check`
+- HTTP requests to `/healthz` and `/v1/status` on Node A and Node B
+- POST request to register Node B with Node A at `/v1/peers`
+- GET request to `/v1/remote-files?peer_id=node-b`
+- GET request to Node A's `/v1/files`
+- GET request to `/v1/remote-files?peer_id=node-b` while Node B was unavailable
 
-## Evidence integrity note
-This record summarises previously supplied outputs and repository information. It does not claim that all checks were rerun at the current integration commit.
+## Observed results
+
+- Both nodes returned HTTP 200 from `/healthz`, with their correct node IDs and an `ok` status.
+- Both nodes returned HTTP 200 from `/v1/status`, with a `healthy` status.
+- Registering Node B returned HTTP 201.
+- Node A retrieved Node B's remote file metadata with HTTP 200. The response contained `diagram.txt` and `notes.txt`.
+- Node A's local `/v1/files` endpoint returned HTTP 200 and metadata for `alpha.txt`.
+- The automated check script passed, including the build, test suite and `go vet`.
+- The race-enabled test suite passed, all Go modules verified, and `git diff --check` reported no errors.
+
+## Failure case and diagnosis
+
+While Node B was unavailable, Node A's remote-files endpoint returned HTTP 503 with `{"error":"peer_unavailable"}`. The request utility then exited with status 1 because it expected HTTP 200 by default. Node A's local file endpoint continued to return HTTP 200. This shows that a remote peer failure is reported clearly without preventing the local file endpoint from responding.
+
+## Design decision and alternative
+
+The implementation uses HTTP for the client-facing API and gRPC with Protocol Buffers for remote file metadata. Node A looks up the registered peer and requests its file metadata through the peer's gRPC address. An alternative would be to use HTTP and JSON for remote metadata as well. The current approach demonstrates the required remote procedure call interface.
+
+## Remaining limitations
+
+The current implementation does not provide authentication or encryption. File contents are not transferred, only metadata. Remote requests can fail when a peer is unavailable, and the file catalogues are held in memory rather than being synchronised through persistent storage.
+
+## Sources and AI-use disclosure
+
+I consulted the coursework guidance, supplied project scaffold and official Go, gRPC and Protocol Buffers documentation. ChatGPT assisted with explanations and troubleshooting. I ran the listed checks and live requests and recorded their observed results.
