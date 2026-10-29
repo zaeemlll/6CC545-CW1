@@ -43,3 +43,14 @@ The current implementation does not provide authentication or encryption. File c
 ## Sources and AI-use disclosure
 
 I consulted the coursework guidance, supplied project scaffold and official Go, gRPC and Protocol Buffers documentation. ChatGPT assisted with explanations and troubleshooting. I ran the listed checks and live requests and recorded their observed results.
+
+## Additional live integration checks — 29 October 2026
+
+- **Duplicate peer registration:** Re-registering Node B with Node A returned HTTP 409 with `duplicate_peer`.
+- **Reverse peer registration:** Registering Node A with Node B returned HTTP 201. Node B retrieved Node A's `alpha.txt` metadata through `/v1/remote-files?peer_id=node-a`, returning HTTP 200.
+- **TCP messaging:** Node A sent `tcp-check-001` to Node B on TCP port 7002. Node B accepted the message and its inbox contained the matching request ID and text. Node B then sent `tcp-check-002` to Node A on port 7001; Node A accepted it and recorded it in its inbox.
+- **UDP messaging:** Node A sent `udp-check-001` to Node B on UDP port 7102. Node B accepted the message and its inbox contained the matching request ID and text. Node B then sent `udp-check-002` to Node A on port 7101; Node A accepted it and recorded it in its inbox.
+- **Status validation:** Node A's status was changed from `healthy` to `degraded` using POST `/v1/status`, returning HTTP 200. Malformed JSON returned HTTP 400 with `invalid_json`; an invalid status value returned HTTP 400 with `invalid_status`; an oversized request returned HTTP 413 with `body_too_large`. A subsequent GET confirmed the status remained `degraded`.
+- **Peer outage and recovery:** With Node B stopped, Node A's `/healthz` and `/v1/files` continued to return HTTP 200. Its remote-files request returned HTTP 503 with `peer_unavailable`. Node B was then restarted and its health endpoint returned HTTP 200.
+- **Occupied-port startup failure:** Starting a test node using the already occupied HTTP address `127.0.0.1:8081` produced a clear `address already in use` error and exited unsuccessfully, as expected.
+- **Listener shutdown and restart:** After Node B was stopped, checks for its HTTP, TCP, gRPC and UDP listening ports showed no listener output. After restarting Node B, its HTTP, TCP, gRPC and UDP listeners were present again.

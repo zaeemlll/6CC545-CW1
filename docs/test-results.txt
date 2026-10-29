@@ -60,3 +60,15 @@ ok  	example.edu/6cc545/cw1/internal/state	4.374s
 all modules verified
 
 ===== GIT DIFF CHECK =====
+
+===== ADDITIONAL LIVE INTEGRATION CHECKS (29 OCTOBER 2026) =====
+
+- Duplicate peer registration: HTTP 409, duplicate_peer.
+- Reverse peer registration: HTTP 201; Node B retrieved Node A's alpha.txt metadata with HTTP 200.
+- TCP messaging: request IDs tcp-check-001 (A to B) and tcp-check-002 (B to A) were accepted and appeared in the receiving nodes' inboxes.
+- UDP messaging: request IDs udp-check-001 (A to B) and udp-check-002 (B to A) were accepted and appeared in the receiving nodes' inboxes.
+- Status update: Node A changed from healthy to degraded with HTTP 200.
+- Invalid status requests: malformed JSON returned HTTP 400 (invalid_json); an invalid status returned HTTP 400 (invalid_status); an oversized request returned HTTP 413 (body_too_large). The stored status remained degraded.
+- Node B outage: Node A health and local files remained available with HTTP 200; remote metadata returned HTTP 503 (peer_unavailable).
+- Recovery: Node B restarted; its health endpoint returned HTTP 200 and HTTP, TCP, UDP and gRPC listeners were checked.
+- Occupied HTTP port: test-node startup reported address already in use and exited unsuccessfully, as expected.
