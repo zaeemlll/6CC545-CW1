@@ -12,10 +12,6 @@
 
 **Go version / OS:** `go1.27.1 darwin/amd64`
 
-**Protobuf compiler:** `libprotoc 36.2`
-
-**Protobuf generators:** `protoc-gen-go v1.36.6`; `protoc-gen-go-grpc 1.5.1`
-
 ## Commands actually executed
 
 - `sh scripts/generate.sh`

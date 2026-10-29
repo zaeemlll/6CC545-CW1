@@ -8,7 +8,7 @@
 
 **Immutable tag:** `week04`
 
-**Commit hash:** `5f83cac10700f86db11963cb675fa73d5f930f3d` (checkpoint tag target; implementation commit: `71499ae4952ae27b4d76c571961e8132c161ef58`)
+**Commit hash:** `5f83cac10700f86db11963cb675fa73d5f930f3d`
 
 **Go version / OS:** `go1.27.1 darwin/amd64`
 
