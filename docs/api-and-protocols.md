@@ -284,3 +284,157 @@ during development.
 For submission evidence, include the actual server and client commands
 and their observed output. Record any failure case and its observed
 result; do not use example output as if it were a real test transcript.
+
+## Week 6 — Event publishing and peer notification
+
+### Purpose
+
+Week 6 adds an event bus to each node. It allows application components
+to publish file metadata events without depending directly on individual
+subscribers.
+
+The application creates one shared event bus during startup. Separate
+subscribers receive their own copies through independent bounded queues.
+The implementation includes audit logging, a metrics consumer and a
+worker that forwards events to registered peers.
+
+The event describes metadata only. At this stage, the project does not
+store or transfer physical file contents. The `file.added` event therefore
+represents registered file metadata, not a completed physical file upload.
+
+### Event contract
+
+An event is represented by the following JSON fields:
+
+| Field | Meaning |
+|---|---|
+| `id` | Event identifier used for duplicate detection |
+| `kind` | Event topic, such as `file.added` |
+| `origin` | Identifier of the node that created the event |
+| `name` | File name associated with the event |
+
+Example:
+
+    {
+      "id": "live-001",
+      "kind": "file.added",
+      "origin": "node-a",
+      "name": "integration-demo.txt"
+    }
+
+The event contains metadata and does not include file contents.
+
+### Subscription and delivery
+
+`Subscribe(topic)` creates an independent subscription for a topic.
+It returns a receive-only channel and an idempotent cancellation function.
+The bus owns the subscriber channels and coordinates their closure.
+
+`Publish(event)` validates the event and attempts a non-blocking send
+to each matching subscriber. A slow subscriber cannot block the publisher.
+
+Each subscriber has a bounded queue. If its queue is full, the newest
+event for that subscriber is dropped. The `Delivery` result reports the
+number of accepted queue deliveries and dropped deliveries.
+
+A reported delivery means that an event was accepted into a subscriber
+queue. It does not confirm that the subscriber has finished processing it.
+
+### Back-pressure and duplicate handling
+
+The queue capacity used by the application is 64 events per subscriber.
+The bus uses a drop-newest policy when a queue is full. It does not create
+a goroutine for each attempted delivery.
+
+The bus remembers a bounded recent history of up to 4096 event identifiers.
+The duplicate key combines the origin and event ID. A duplicate event
+within this retained history is not delivered again.
+
+The history is held in memory. An event may be lost if it is published
+when there are no subscribers or if all relevant subscriber queues are
+full. Such an event is still recorded in the recent duplicate history.
+After an old entry is removed from that bounded history, the same event
+could be accepted again.
+
+This is best-effort, at-most-once delivery within the retained duplicate
+window. It is not a durable message queue and does not guarantee that
+every subscriber processes every event.
+
+### Peer forwarding
+
+The forwarding worker subscribes to `file.added` events and sends them
+to registered peers using their HTTP `/v1/events` endpoint. This uses
+network communication between separate node processes; a Go channel
+alone cannot communicate between processes.
+
+Each forwarding attempt has a two-second timeout and the worker makes
+up to two attempts for a send. If forwarding continues to fail, the
+worker reports the failure and restarts its subscription for later events.
+The forwarding adapter stops at the first peer error, so later peers in the snapshot may not receive that event. Because the worker retries the forwarding operation, peers that already accepted it may receive the same event again; receiver-side duplicate detection suppresses it while the ID remains in the retained history. A failed event is not guaranteed to be delivered later.
+
+The original event ID and origin are preserved. A receiving node publishes
+the event locally, but its duplicate detection prevents the same event
+from circulating indefinitely between the nodes while its identifier
+remains in the retained history.
+
+The current peer forwarding endpoint uses HTTP on loopback addresses.
+It does not provide TLS or authentication. Secure peer communication is
+a later CW2 task.
+
+### HTTP event endpoint
+
+`POST /v1/events` accepts one JSON event.
+
+| Request or condition | HTTP status | Meaning |
+|---|---:|---|
+| Valid new event | 202 | Event accepted by the local bus |
+| Previously seen event | 200 | Duplicate recognised |
+| Invalid event or JSON | 400 | Request rejected |
+| Unsupported media type | 415 | JSON content type required |
+| Unsupported method | 405 | Only POST is supported |
+| Closed event bus | 503 | Event service unavailable |
+
+Example request:
+
+    POST /v1/events
+    Content-Type: application/json
+
+    {
+      "id": "live-001",
+      "kind": "file.added",
+      "origin": "node-a",
+      "name": "integration-demo.txt"
+    }
+
+A new event returns HTTP 202 with delivery counts. A duplicate returns
+HTTP 200 with `duplicate` set to true.
+
+### Verification
+
+The event tests cover independent subscribers, topic filtering, a full
+subscriber queue, invalid events, cancellation, closure, concurrent
+publishing and forwarding behaviour.
+
+The application was also tested using two separate running node processes.
+Both peers were registered successfully with HTTP 201. Posting a new event
+to Node A returned HTTP 202 with three local deliveries and zero drops.
+Node B logged the event through its audit and metrics consumers. Posting
+the same event to Node B again returned HTTP 200 with `duplicate: true`
+and zero additional deliveries.
+
+The full Go test suite, acceptance tests, race-enabled acceptance tests
+and `go vet ./...` completed successfully during this development stage.
+
+### Limitations and future work
+
+The event bus is in-memory and does not survive a process restart.
+Queue acceptance does not confirm successful processing. Events may be
+dropped under back-pressure or when a peer is unavailable. The bounded
+duplicate history also means that very old duplicate events may eventually
+be accepted again.
+
+There is no durable replay or automatic repair of missed notifications.
+Later reconciliation work is intended to address differences between
+nodes. Physical file storage and transfer are also not implemented at
+this stage. The current peer HTTP communication is unauthenticated and
+must be upgraded as part of the later security work.
