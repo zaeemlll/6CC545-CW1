@@ -97,32 +97,70 @@ func TestCancellationAndAbsentFile(t *testing.T) {
 	}
 }
 func TestConcurrentSameNameConsistentSnapshot(t *testing.T) {
-	s, _ := New(t.TempDir(), 1024)
-	seed := []byte("seed")
-	if _, e := s.Put(context.Background(), "same.txt", bytes.NewReader(seed), 4, digest(seed)); e != nil {
-		t.Fatal(e)
+	store, err := New(t.TempDir(), 1024)
+	if err != nil {
+		t.Fatal(err)
 	}
+
+	seed := []byte("seed")
+	if _, err := store.Put(context.Background(), "same.txt",
+		bytes.NewReader(seed), int64(len(seed)), digest(seed)); err != nil {
+		t.Fatal(err)
+	}
+
+	expected := map[string]string{string(seed): digest(seed)}
+	for i := 0; i < 12; i++ {
+		body := []byte(fmt.Sprintf("body-%02d", i))
+		expected[string(body)] = digest(body)
+	}
+
+	start := make(chan struct{})
 	var wg sync.WaitGroup
+
 	for i := 0; i < 12; i++ {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			b := []byte(fmt.Sprintf("body-%02d", i))
-			if _, e := s.Put(context.Background(), "same.txt", bytes.NewReader(b), int64(len(b)), digest(b)); e != nil {
-				t.Error(e)
-			}
-			r, m, e := s.Open("same.txt")
-			if e != nil {
-				t.Error(e)
+			<-start
+
+			body := []byte(fmt.Sprintf("body-%02d", i))
+			if _, err := store.Put(context.Background(), "same.txt",
+				bytes.NewReader(body), int64(len(body)), digest(body)); err != nil {
+				t.Errorf("Put: %v", err)
 				return
 			}
-			got, e := io.ReadAll(r)
-			r.Close()
-			if e != nil || int64(len(got)) != m.Size || digest(got) != m.SHA256 {
-				t.Error("inconsistent file snapshot")
+
+			reader, metadata, err := store.Open("same.txt")
+			if err != nil {
+				t.Errorf("Open: %v", err)
+				return
+			}
+
+			got, readErr := io.ReadAll(reader)
+			closeErr := reader.Close()
+			if readErr != nil {
+				t.Errorf("Read: %v", readErr)
+				return
+			}
+			if closeErr != nil {
+				t.Errorf("Close: %v", closeErr)
+				return
+			}
+
+			expectedDigest, ok := expected[string(got)]
+			if !ok {
+				t.Errorf("read incomplete or unexpected version: %q", got)
+				return
+			}
+			if metadata.Size != int64(len(got)) ||
+				metadata.SHA256 != expectedDigest ||
+				digest(got) != metadata.SHA256 {
+				t.Errorf("content and metadata do not describe the same version")
 			}
 		}(i)
 	}
+
+	close(start)
 	wg.Wait()
 }
 
@@ -288,5 +326,106 @@ func TestConcurrentDifferentNames(t *testing.T) {
 	}
 	if len(snapshot) != count {
 		t.Fatalf("snapshot contains %d files, want %d", len(snapshot), count)
+	}
+}
+
+type cancelAfterFirstRead struct {
+	cancel context.CancelFunc
+	sent   bool
+}
+
+func (r *cancelAfterFirstRead) Read(p []byte) (int, error) {
+	if r.sent {
+		return 0, io.EOF
+	}
+	r.sent = true
+	n := copy(p, []byte("part"))
+	r.cancel()
+	return n, nil
+}
+
+func TestShortUploadPreservesCommittedFile(t *testing.T) {
+	dir := t.TempDir()
+	store, err := New(dir, 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	old := []byte("previous")
+	if _, err := store.Put(context.Background(), "safe.txt",
+		bytes.NewReader(old), int64(len(old)), digest(old)); err != nil {
+		t.Fatal(err)
+	}
+
+	short := []byte("sh")
+	_, err = store.Put(context.Background(), "safe.txt",
+		bytes.NewReader(short), 3, digest(short))
+	if !errors.Is(err, ErrIntegrity) {
+		t.Fatalf("want integrity error for short upload, got %v", err)
+	}
+
+	reader, _, err := store.Open("safe.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, readErr := io.ReadAll(reader)
+	_ = reader.Close()
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if !bytes.Equal(got, old) {
+		t.Fatalf("short upload changed previous content: got %q", got)
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "safe.txt" {
+		t.Fatalf("temporary file leaked after short upload: %v", entries)
+	}
+}
+
+func TestCancellationDuringWriteCleansTemporaryFile(t *testing.T) {
+	dir := t.TempDir()
+	store, err := New(dir, 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	old := []byte("previous")
+	if _, err := store.Put(context.Background(), "safe.txt",
+		bytes.NewReader(old), int64(len(old)), digest(old)); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	source := &cancelAfterFirstRead{cancel: cancel}
+	_, err = store.Put(ctx, "safe.txt", source, 10, digest([]byte("part------")))
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("want context cancellation during write, got %v", err)
+	}
+
+	reader, _, err := store.Open("safe.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, readErr := io.ReadAll(reader)
+	_ = reader.Close()
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if !bytes.Equal(got, old) {
+		t.Fatalf("cancelled write changed previous content: got %q", got)
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "safe.txt" {
+		t.Fatalf("temporary file leaked after cancellation: %v", entries)
 	}
 }
