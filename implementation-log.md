@@ -9,3 +9,62 @@
 | 2026-10-25 | Week 5 — Remote file metadata over gRPC. Implementation commit: `4ae1cae` — Implement Week 5 gRPC remote file metadata. Checkpoint: `week05`. | Added the Protocol Buffers file service, generated Go bindings, a gRPC client and server, a remote-files HTTP endpoint, bounded RPC requests and gRPC listener configuration for both node scripts. Pinned runtime and generator dependencies and recorded tool versions. I chose gRPC and Protocol Buffers to define a structured service contract for exchanging file metadata between nodes. | Ran `go test ./... -count=1 -timeout 30s` and `go test -race ./... -count=1 -timeout 30s`; all packages containing tests returned `ok`. Ran `go vet ./...`; no errors were reported. `go mod verify`, `git diff --check` and `sh scripts/check.sh` passed in the recorded Week 5 checks. The test suite includes remote-file listing, request validation, unavailable-service, cancellation and empty-catalogue tests. Live testing confirmed HTTP 201 for peer registration, HTTP 200 for remote metadata from Node B and HTTP 503 when Node B was unavailable. | The remote-file service demonstrates metadata retrieval and handles an unavailable node. However, a successful request does not prove that the connection is secure, and authentication and encryption remain limitations. The next step is to complete the required final integration checks across the nodes and confirm the complete system against the coursework acceptance criteria. | I have consulted the official Protocol Buffers documentation and gRPC guidance on deadlines. I have also got partial support from artificial intelligence. |
 | 2026-10-28 | Final integration and verification | The final integration brought the weekly work together in one Go project. I checked the HTTP endpoints and the communication between Node A and Node B. I kept the existing project structure and documented the remaining limitations rather than adding features outside the CW1 scope. | Ran sh scripts/check.sh, go test -race ./... -count=1 -timeout 30s, go mod verify and git diff --check. The checks passed, the Go modules were verified, and the working diff had no whitespace errors. Live checks returned HTTP 200 for health and status, HTTP 201 for peer registration, HTTP 200 for available remote-file metadata, and HTTP 503 when the remote peer was unavailable. | The final checks supported the integration of the main components. The prototype still has limitations: it does not use TLS or authentication, and peer and file metadata are held in memory. Final submission packaging and a final check of the required files remain necessary. | ChatGPT was used for explanations and understanding. |
 | 2026-11-14 | Week 6 — Event publishing and peer notification | Added a shared event bus with independent bounded subscriber queues, topic filtering, drop-newest back-pressure, coordinated cancellation and closure, and bounded duplicate detection. Integrated audit and metrics subscribers into application startup. Added an HTTP event endpoint and a forwarding worker that sends events to registered peers. I used HTTP for the process-to-process adapter because a Go channel only works inside one process. | Ran targeted event tests, race-enabled event acceptance tests, application tests, the full Go test suite, the full acceptance suite, the ordinary race-enabled full test suite and the race-enabled full acceptance suite. All passed. `go build ./...` completed without errors, `go mod verify` verified all modules, `go vet ./...` reported no issues, and `git diff --check` found no whitespace errors. Live testing registered both peers with HTTP 201. Node A accepted `live-001` with HTTP 202 and three local queue deliveries. Both Node A and Node B logged the event. Reposting the same event to Node B returned HTTP 200 with `duplicate: true` and zero additional deliveries. | The two-node demonstration confirms that events can be forwarded between separate processes and that duplicate detection prevents the demonstrated forwarding loop. Delivery remains best-effort: queues and duplicate history are in memory, full queues drop new events, and queue acceptance does not confirm processing. Physical file storage, durable reconciliation, TLS and authentication remain future work. | I consulted the supplied Week 6 workbook and integration guide, Go documentation and coursework materials. ChatGPT assisted with explanations, troubleshooting and documentation. I ran and checked the tests and live requests. |
+
+## Week 7 — Concurrent file storage and integrity
+
+### Task 7.1 — Storage invariant and ownership
+
+The main storage invariant is that a successful Open returns the content and metadata for the same committed file version. An incomplete or unverified upload must not be advertised as a stored file. If a replacement fails, the previous committed file must remain unchanged.
+
+Each node owns its storage directory. The Store manages its root directory, in-memory metadata, read/write lock and temporary-file cleanup. The caller supplies the operation context and source reader, and must close the read handle returned by Open.
+
+### Tasks 7.2–7.4 — Validation, writing and reading
+
+Implemented portable filename validation. Names are restricted to a defined character set and unsafe names, path separators, traversal patterns and reserved Windows device names are rejected.
+
+Put validates the expected size and SHA256 value, checks the configured size limit, and calculates the digest while streaming the input into a temporary file inside the storage root. It checks the actual size and digest before committing the file. It also rejects additional bytes beyond the declared size and checks for cancellation. Temporary files are removed when an operation fails.
+
+The final replacement and metadata update are protected by the Store lock. Open reads the committed content and matching metadata under the read lock, checks the content size and digest, and returns an independent read handle. Snapshot returns a detached, filename-sorted metadata list.
+
+The application currently uses a 10 MiB maximum file size. This is an implementation choice, not a limit specified by the workbook.
+
+### Application integration and event publishing
+
+Connected the Store to the application. The HTTP API supports uploading files through POST /v1/files/{name}, downloading them through GET /v1/files/{name}, and listing committed metadata through GET /v1/files.
+
+The gRPC file service receives metadata through a storage adapter, which maps the Store metadata to the existing model.FileMetadata type.
+
+A file.added event is published only after Put successfully commits a file. Failed uploads do not publish this event. Event delivery is reported separately from storage success, so a notification failure does not undo a committed file.
+
+The application uses a separate data directory for each node, based on its node ID. The previous seed metadata is not treated as actual stored file content.
+
+### Task 7.5 — Concurrency and integrity tests
+
+Added acceptance tests for portable names, successful write/read operations, metadata consistency, failed writes preserving previous content, temporary-file cleanup, cancellation, missing files, concurrent replacement of the same filename, concurrent writes to different filenames, reader failure, zero-byte files, and sorted detached snapshots.
+
+Added HTTP tests for upload, download, successful event publishing, invalid digest rejection, file listing and rejection of unsupported listing methods. Added an application-level integration test that uploads a file through the wired application, checks the listing, downloads it and verifies the returned content and SHA256 header.
+
+### Task 7.7 — Verification results
+
+Tested on Go 1.27.1, darwin/amd64, with CGO enabled and Apple Clang.
+
+The following commands completed successfully after the additional tests were added:
+
+- go test ./... -count=1 -timeout 120s
+- go test -tags acceptance ./... -count=1 -timeout 120s
+- go test -race -tags acceptance ./... -count=1 -timeout 180s
+- go vet ./...
+- go build ./...
+- go mod verify
+
+All test packages passed, including the race-enabled acceptance tests. Static analysis and the build completed without errors, and all Go modules were verified.
+
+### Limitations and next steps
+
+The metadata catalogue is currently held in memory. Restart recovery is not implemented in Week 7; rebuilding and verifying the catalogue after a restart is planned for Week 8. A process-local lock does not coordinate multiple processes sharing one storage directory, so each node must have its own directory.
+
+The temporary-file and rename approach was tested on the development macOS environment. This does not prove identical rename behaviour on Linux or other filesystems, and it does not establish crash durability or power-loss persistence. A source reader that blocks inside Read cannot necessarily be interrupted by checking its context; network adapters will need suitable read cancellation or deadlines.
+
+The tests verify the implemented behaviour on the stated development environment. They do not establish that recovery, multi-process shared-directory access, crash durability, TLS or authentication have been implemented.
+
+I used the supplied Week 7 workbook and integration guide. ChatGPT assisted with explanations, troubleshooting and documentation. I ran and checked the implementation and verification commands.

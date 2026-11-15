@@ -22,19 +22,22 @@ func Run(ctx context.Context, c config.Config) error {
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	mux := http.NewServeMux()
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { httpapi.ErrorJSON(w, 404, "not_found") })
-	mux.HandleFunc("/healthz", httpapi.Health(c.ID))
-	stop, err := Wire(ctx, c, mux)
-	if err != nil {
-		return err
-	}
-	defer stop()
+
 	ln, err := net.Listen("tcp", c.HTTP)
 	if err != nil {
 		return fmt.Errorf("listen HTTP %s: %w", c.HTTP, err)
 	}
 	defer ln.Close()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { httpapi.ErrorJSON(w, 404, "not_found") })
+	mux.HandleFunc("/healthz", httpapi.Health(c.ID))
+
+	stop, err := Wire(ctx, c, mux)
+	if err != nil {
+		return err
+	}
+	defer stop()
 	srv := &http.Server{Handler: mux, ReadHeaderTimeout: c.Timeout, ReadTimeout: 2 * c.Timeout, WriteTimeout: 2 * c.Timeout, IdleTimeout: 30 * time.Second}
 	done := make(chan error, 1)
 	go func() { done <- srv.Serve(ln) }()

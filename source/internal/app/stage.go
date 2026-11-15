@@ -2,14 +2,11 @@ package app
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"log"
 	"net"
 	"net/http"
-	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -21,52 +18,18 @@ import (
 	"example.edu/6cc545/cw1/internal/events"
 	"example.edu/6cc545/cw1/internal/httpapi"
 	"example.edu/6cc545/cw1/internal/ipc"
-	"example.edu/6cc545/cw1/internal/model"
 	"example.edu/6cc545/cw1/internal/state"
+	"example.edu/6cc545/cw1/internal/storage"
 )
 
 func CheckStage(c config.Config) error {
 	return nil
 }
 
-func loadSeed(c *state.Catalog, path string) error {
-	if path == "" {
-		return nil
-	}
-
-	f, err := os.Open(path)
-	if err != nil {
-		return fmt.Errorf("open seed file: %w", err)
-	}
-	defer f.Close()
-
-	data, err := io.ReadAll(io.LimitReader(f, 65537))
-	if err != nil {
-		return fmt.Errorf("read seed file: %w", err)
-	}
-	if len(data) > 65536 {
-		return errors.New("seed file exceeds 65536 bytes")
-	}
-
-	var files []model.FileMetadata
-	if err := json.Unmarshal(data, &files); err != nil {
-		return fmt.Errorf("decode seed file: %w", err)
-	}
-	if err := c.Replace(files); err != nil {
-		return fmt.Errorf("validate seed file: %w", err)
-	}
-	return nil
-}
-
 func Wire(ctx context.Context, c config.Config, mux *http.ServeMux) (func(), error) {
 	status := state.NewStatus()
 	registry := state.NewRegistry()
-	catalog := state.NewCatalog()
 	inbox := state.NewInbox()
-
-	if err := loadSeed(catalog, c.Seed); err != nil {
-		return nil, err
-	}
 
 	var tcpListener net.Listener
 	var udpConn *net.UDPConn
@@ -114,6 +77,35 @@ func Wire(ctx context.Context, c config.Config, mux *http.ServeMux) (func(), err
 	}
 
 	// One bounded event bus is shared by this node's subscribers.
+	const maxStoredFileBytes int64 = 10 << 20
+	store, err := storage.New(filepath.Join("data", c.ID), maxStoredFileBytes)
+	if err != nil {
+		if tcpListener != nil {
+			_ = tcpListener.Close()
+		}
+		if udpConn != nil {
+			_ = udpConn.Close()
+		}
+		if grpcListener != nil {
+			_ = grpcListener.Close()
+		}
+		return nil, fmt.Errorf("create file storage: %w", err)
+	}
+
+	storageCatalog, err := rpcfiles.NewStorageCatalog(store)
+	if err != nil {
+		if tcpListener != nil {
+			_ = tcpListener.Close()
+		}
+		if udpConn != nil {
+			_ = udpConn.Close()
+		}
+		if grpcListener != nil {
+			_ = grpcListener.Close()
+		}
+		return nil, fmt.Errorf("create storage catalogue: %w", err)
+	}
+
 	eventBus, err := events.New(64)
 	if err != nil {
 		if tcpListener != nil {
@@ -178,7 +170,8 @@ func Wire(ctx context.Context, c config.Config, mux *http.ServeMux) (func(), err
 
 	mux.HandleFunc("/v1/status", httpapi.StatusResource(status))
 	mux.HandleFunc("/v1/peers", httpapi.Peers(registry))
-	mux.HandleFunc("/v1/files", httpapi.Files(catalog))
+	mux.HandleFunc("/v1/files", httpapi.StoredFiles(store))
+	mux.HandleFunc("/v1/files/", httpapi.StoredFile(store, eventBus, c.ID, maxStoredFileBytes))
 	mux.HandleFunc("/v1/messages", httpapi.Messages(inbox))
 	mux.HandleFunc("/v1/remote-files", httpapi.RemoteFiles(registry, c.ID, c.Timeout))
 	mux.HandleFunc("/v1/events", httpapi.Events(eventBus))
@@ -269,7 +262,7 @@ func Wire(ctx context.Context, c config.Config, mux *http.ServeMux) (func(), err
 		)
 		pb.RegisterFileServiceServer(grpcServer, &rpcfiles.Service{
 			NodeID:  c.ID,
-			Catalog: catalog,
+			Catalog: storageCatalog,
 		})
 
 		grpcDone = make(chan struct{})
@@ -336,28 +329,6 @@ func Wire(ctx context.Context, c config.Config, mux *http.ServeMux) (func(), err
 			}
 		}()
 		log.Printf("node=%s udp=%s ready", c.ID, udpConn.LocalAddr())
-	}
-
-	// Publish metadata events for files already present in the seed catalogue.
-	for i, file := range catalog.Snapshot() {
-		event := events.Event{
-			ID:     fmt.Sprintf("seed-%d", i+1),
-			Kind:   "file.added",
-			Origin: c.ID,
-			Name:   file.Name,
-		}
-
-		delivery, err := eventBus.Publish(event)
-		if err != nil {
-			log.Printf("event publish failed name=%s: %v", file.Name, err)
-			continue
-		}
-		if delivery.Dropped > 0 {
-			log.Printf(
-				"event publish dropped name=%s subscribers=%d",
-				file.Name, delivery.Dropped,
-			)
-		}
 	}
 
 	return stop, nil
