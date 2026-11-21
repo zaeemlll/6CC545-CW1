@@ -37,3 +37,19 @@ func Health(nodeID string) http.HandlerFunc {
 		})
 	}
 }
+
+// Readiness reports whether this node has completed startup.
+func Readiness(nodeID string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", http.MethodGet)
+			ErrorJSON(w, http.StatusMethodNotAllowed, "method_not_allowed")
+			return
+		}
+
+		WriteJSON(w, http.StatusOK, map[string]string{
+			"node_id": nodeID,
+			"status":  "ready",
+		})
+	}
+}

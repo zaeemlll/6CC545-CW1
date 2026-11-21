@@ -1,12 +1,13 @@
-# 6CC545 CW1 — Distributed Applications and Web Services
+# 6CC545 CW2 — Distributed Applications and Web Services
 
 ## Prerequisites
 
 - Go 1.23 or later.
 - Git, if cloning the repository.
 - A terminal with a POSIX-compatible shell.
+- Docker Engine and Docker Compose v2 for the container deployment.
 
-The project was developed and tested on macOS using Go 1.27.1. Generated Protocol Buffers and gRPC files are included in the source.
+The Go application was developed and tested locally on macOS using Go 1.27.1. Generated Protocol Buffers and gRPC files are included in the source. Docker deployment was tested on macOS 14.5 (Intel x86_64) using Docker Desktop 4.99.0, Docker Engine 29.9.3 and Docker Compose v5.7.0. Confirm the Go image version against the staff-approved environment before final submission.
 
 Clone the repository:
 
@@ -131,16 +132,59 @@ go run ./cmd/ipcclient -h
 
 Refer to `docs/api-and-protocols.md` for the supported request formats and protocol details.
 
+## CW2 Docker Compose deployment
+
+The Compose configuration defines three independently configured nodes. Each node has its own identity and named data volume. The services communicate over the Compose network using their service names.
+
+The three-node Docker Compose deployment was tested successfully on the development machine. Each node uses a separate named volume and communicates over the private Compose network. The Go image version should still be checked against the staff-approved environment before final submission.
+
+Validate and build:
+
+    docker compose config --quiet
+    docker build --target test -f Dockerfile .
+    docker build --target acceptance -f Dockerfile .
+
+Start and inspect:
+
+    docker compose up --build -d
+    docker compose ps
+
+Check readiness:
+
+    curl http://localhost:8081/readyz
+    curl http://localhost:8082/readyz
+    curl http://localhost:8083/readyz
+
+Request remote file metadata from node B through node A:
+
+    curl "http://localhost:8081/v1/remote-files?peer_id=node-b"
+
+Stop the deployment:
+
+    docker compose down
+
+This preserves named volumes. To delete the volumes and their data as well:
+
+    docker compose down -v
+
+| Node | Host HTTP port | Data volume |
+|---|---:|---|
+| node-a | 8081 | data-a |
+| node-b | 8082 | data-b |
+| node-c | 8083 | data-c |
+
+The readiness endpoint checks local startup and recovery. It does not prove that every peer is reachable or that file contents have been synchronised.
+
 ## Cleanup
 
 Stop Node A and Node B by pressing `Ctrl+C` in each node's terminal. Wait for both processes to exit.
 
-The project uses in-memory state for peer registrations, catalogues and messages. This state is not preserved across restarts.
+Peer registrations and message state are held in memory and are not preserved across restarts. Committed file contents and metadata can be recovered from the configured local data directory after a restart. Docker named-volume persistence was verified by restarting node-a and retrieving the same file with matching content and SHA-256. The named volumes also remained after docker compose down.
 
 ## Known limitations
 
-- The services are configured for local loopback testing.
+- The local two-node scripts use loopback addresses. The Docker configuration uses the private Compose network for container communication.
 - TLS and application-level authentication are not implemented.
-- Peer registrations, catalogues and message state are held in memory.
+- Peer registrations and message state are held in memory. The file catalogue is rebuilt from committed files in the configured data directory during startup recovery.
 - Remote file operations exchange metadata, not actual file contents.
 - The prototype does not implement the full security and peer-to-peer features planned for CW2.

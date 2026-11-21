@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"syscall"
 )
 
 func main() {
@@ -20,7 +21,7 @@ func main() {
 		log.Printf("configuration: %v", e)
 		os.Exit(2)
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if e = app.Run(ctx, c); e != nil {
 		log.Printf("node stopped: %v", e)

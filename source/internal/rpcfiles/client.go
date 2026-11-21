@@ -13,7 +13,7 @@ import (
 )
 
 func Fetch(ctx context.Context, address, requester string, timeout time.Duration) (*pb.ListFilesResponse, error) {
-	if !config.ValidAddress(address) {
+	if !config.ValidPeerAddress(address) {
 		return nil, status.Error(codes.InvalidArgument, "invalid peer address")
 	}
 

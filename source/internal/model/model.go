@@ -24,10 +24,10 @@ func (p Peer) Validate() error {
 	if !config.ValidID(p.ID) {
 		return errors.New("invalid peer ID")
 	}
-	if !config.ValidAddress(p.HTTPAddress) {
+	if !config.ValidPeerAddress(p.HTTPAddress) {
 		return errors.New("invalid HTTP address")
 	}
-	if !config.ValidAddress(p.GRPCAddress) {
+	if !config.ValidPeerAddress(p.GRPCAddress) {
 		return errors.New("invalid gRPC address")
 	}
 

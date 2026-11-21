@@ -86,3 +86,30 @@ func TestWeek05_EmptyCatalogue(t *testing.T) {
 		t.Fatalf("expected no files, got %v", got.GetFiles())
 	}
 }
+func TestWeek08_ServiceRejectsNilRequest(t *testing.T) {
+	svc := &Service{
+		NodeID:  "node-b",
+		Catalog: state.NewCatalog(),
+	}
+
+	_, err := svc.ListFiles(context.Background(), nil)
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("status = %v, want InvalidArgument; error: %v",
+			status.Code(err), err)
+	}
+}
+
+func TestWeek08_ServiceRejectsMissingCatalogue(t *testing.T) {
+	svc := &Service{
+		NodeID: "node-b",
+	}
+
+	_, err := svc.ListFiles(
+		context.Background(),
+		&pb.ListFilesRequest{RequesterId: "node-a"},
+	)
+	if status.Code(err) != codes.Internal {
+		t.Fatalf("status = %v, want Internal; error: %v",
+			status.Code(err), err)
+	}
+}

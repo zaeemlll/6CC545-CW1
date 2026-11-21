@@ -438,3 +438,117 @@ Later reconciliation work is intended to address differences between
 nodes. Physical file storage and transfer are also not implemented at
 this stage. The current peer HTTP communication is unauthenticated and
 must be upgraded as part of the later security work.
+
+## Week 8 — Docker Compose deployment configuration
+
+### Purpose
+
+Week 8 prepares the application to run as three independently configured
+nodes using Docker Compose. Each node uses the same application image but
+has its own identity, network addresses, peer seeds and persistent data
+volume.
+
+The intended services are `node-a`, `node-b` and `node-c`. They communicate
+over a dedicated Docker bridge network.
+
+### Node configuration
+
+| Setting | Node A | Node B | Node C |
+|---|---|---|---|
+| Node identity | `node-a` | `node-b` | `node-c` |
+| HTTP host port | 8081 | 8082 | 8083 |
+| HTTP container port | 8080 | 8080 | 8080 |
+| gRPC container port | 9090 | 9090 | 9090 |
+| Data directory | `/data` | `/data` | `/data` |
+| Docker volume | `data-a` | `data-b` | `data-c` |
+
+Each node listens on `0.0.0.0:8080` for HTTP and
+`0.0.0.0:9090` for gRPC inside its container. The host HTTP ports are
+mapped to the same internal HTTP port on each service.
+
+### Listen and advertised addresses
+
+A listen address tells a service where to accept incoming connections.
+An advertised address tells other nodes which address to use when
+connecting to it.
+
+The Compose configuration advertises the Docker service names:
+
+| Node | HTTP advertised address | gRPC advertised address |
+|---|---|---|
+| Node A | `http://node-a:8080` | `node-a:9090` |
+| Node B | `http://node-b:8080` | `node-b:9090` |
+| Node C | `http://node-c:8080` | `node-c:9090` |
+
+Docker's internal DNS resolves these service names on the Compose
+network. DNS provides address resolution; it does not itself register
+peers, authenticate them or synchronise files.
+
+### Peer seeds and storage
+
+Each node is configured with the other two nodes as its peer seeds.
+For example, Node A uses `node-b:9090,node-c:9090`.
+
+Each service has a separate named volume mounted at `/data`. This keeps
+the nodes' storage separate instead of making them use one shared
+directory. The application uses `DATA_DIR` to select its local storage
+directory.
+
+The Compose configuration is intended to preserve these named volumes
+when containers are stopped and recreated. The command
+`docker compose down -v` removes the Compose volumes and their stored
+data.
+
+### Configuration precedence
+
+The application supports configuration through command-line flags,
+environment variables and built-in defaults. Command-line flags take
+precedence over environment variables, which take precedence over
+defaults.
+
+The Week 8 Compose configuration uses these environment variables:
+
+- `NODE_ID` — the identity of the node.
+- `HTTP_ADDR` — the HTTP listen address.
+- `GRPC_ADDR` — the gRPC listen address.
+- `HTTP_ADVERTISE` — the HTTP address advertised to peers.
+- `GRPC_ADVERTISE` — the gRPC address advertised to peers.
+- `DATA_DIR` — the local data directory.
+- `PEER_SEEDS` — the other nodes' gRPC addresses.
+
+Configuration is validated during startup. The supplied `.env.example`
+contains the configurable image and application target settings; it
+does not contain credentials or private keys.
+
+### Health and readiness
+
+The application provides two separate HTTP endpoints:
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /healthz` | Reports the node's local liveness and identity |
+| `GET /readyz` | Reports whether the local application has completed startup and storage recovery |
+
+Readiness is a local check. A successful response does not prove that
+other nodes are reachable, that peer communication is working, or that
+files have been synchronised.
+
+The Compose health check uses `/readyz` on the local container address.
+It does not use the health check as proof of the whole distributed
+system's health.
+
+### Deployment verification and limitations
+
+The Compose file defines the intended three-node configuration, but
+Docker deployment was not verified in the development environment.
+The available Docker executables were incompatible with the Intel Mac,
+and the Docker Compose command was unavailable.
+
+Therefore, Compose configuration validation, image builds, container
+startup, real cross-container gRPC calls, volume persistence inside
+containers and container restart tests remain unverified. Local Go tests
+and local storage recovery tests do not replace these deployment tests.
+
+The gRPC configuration in this stage uses plaintext communication.
+TLS and peer authentication are separate security requirements for
+later coursework work.

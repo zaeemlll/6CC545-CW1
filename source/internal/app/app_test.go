@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -149,5 +150,137 @@ func TestWireStoresFilesThroughHTTP(t *testing.T) {
 	}
 	if got := downloadResponse.Header.Get("X-File-SHA256"); got != digest {
 		t.Fatalf("download SHA256 = %q, want %q", got, digest)
+	}
+}
+
+func TestWeek08_WireRecoversFilesThroughHTTP(t *testing.T) {
+	dataDir := filepath.Join(t.TempDir(), "node-data")
+	if err := os.MkdirAll(dataDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+
+	name := "restored.txt"
+	content := []byte("File restored after node restart")
+	if err := os.WriteFile(filepath.Join(dataDir, name), content, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	mux := http.NewServeMux()
+	ctx, cancel := context.WithCancel(context.Background())
+	stop, err := Wire(ctx, config.Config{
+		ID:      "node-recovery",
+		Timeout: time.Second,
+		DataDir: dataDir,
+	}, mux)
+	if err != nil {
+		cancel()
+		t.Fatalf("Wire: %v", err)
+	}
+
+	server := httptest.NewServer(mux)
+	t.Cleanup(func() {
+		server.Close()
+		stop()
+		cancel()
+	})
+
+	response, err := http.Get(server.URL + "/v1/files/" + name)
+	if err != nil {
+		t.Fatalf("download recovered file: %v", err)
+	}
+	defer response.Body.Close()
+
+	got, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("download status = %d, body = %s", response.StatusCode, got)
+	}
+	if !bytes.Equal(got, content) {
+		t.Fatalf("recovered content = %q, want %q", got, content)
+	}
+}
+
+func TestWeek08_WireRegistersPeerSeeds(t *testing.T) {
+	mux := http.NewServeMux()
+	ctx, cancel := context.WithCancel(context.Background())
+	stop, err := Wire(ctx, config.Config{
+		ID:        "node-a",
+		Timeout:   time.Second,
+		DataDir:   filepath.Join(t.TempDir(), "node-a"),
+		PeerSeeds: []string{"node-b:9090", "node-c:9090"},
+	}, mux)
+	if err != nil {
+		cancel()
+		t.Fatalf("Wire: %v", err)
+	}
+
+	server := httptest.NewServer(mux)
+	t.Cleanup(func() {
+		server.Close()
+		stop()
+		cancel()
+	})
+
+	response, err := http.Get(server.URL + "/v1/peers")
+	if err != nil {
+		t.Fatalf("get peers: %v", err)
+	}
+	defer response.Body.Close()
+
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("peer status = %d, body = %s", response.StatusCode, body)
+	}
+
+	for _, expected := range []string{
+		"node-b", "node-b:8080", "node-b:9090",
+		"node-c", "node-c:8080", "node-c:9090",
+	} {
+		if !bytes.Contains(body, []byte(expected)) {
+			t.Errorf("peer response does not contain %q: %s", expected, body)
+		}
+	}
+}
+
+func TestWeek08_WireRejectsInvalidPeerSeeds(t *testing.T) {
+	tests := []struct {
+		name  string
+		seeds []string
+	}{
+		{
+			name:  "invalid seed",
+			seeds: []string{"not a valid address"},
+		},
+		{
+			name:  "self reference",
+			seeds: []string{"node-a:9090"},
+		},
+		{
+			name:  "duplicate seed",
+			seeds: []string{"node-b:9090", "node-b:9090"},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			_, err := Wire(ctx, config.Config{
+				ID:        "node-a",
+				Timeout:   time.Second,
+				DataDir:   filepath.Join(t.TempDir(), "node-a"),
+				PeerSeeds: test.seeds,
+			}, http.NewServeMux())
+
+			if err == nil {
+				t.Fatal("Wire succeeded; want peer seed validation error")
+			}
+		})
 	}
 }

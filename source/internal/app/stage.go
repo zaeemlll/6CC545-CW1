@@ -18,6 +18,7 @@ import (
 	"example.edu/6cc545/cw1/internal/events"
 	"example.edu/6cc545/cw1/internal/httpapi"
 	"example.edu/6cc545/cw1/internal/ipc"
+	"example.edu/6cc545/cw1/internal/model"
 	"example.edu/6cc545/cw1/internal/state"
 	"example.edu/6cc545/cw1/internal/storage"
 )
@@ -26,10 +27,39 @@ func CheckStage(c config.Config) error {
 	return nil
 }
 
+// peerFromSeed converts a Compose gRPC seed into the peer HTTP and gRPC
+// service addresses. The Week 8 Compose network uses HTTP port 8080.
+func peerFromSeed(seed string) (model.Peer, error) {
+	host, _, err := net.SplitHostPort(seed)
+	if err != nil || !config.ValidID(host) {
+		return model.Peer{}, fmt.Errorf("invalid peer seed %q: host must be a valid node ID", seed)
+	}
+
+	return model.Peer{
+		ID:          host,
+		HTTPAddress: net.JoinHostPort(host, "8080"),
+		GRPCAddress: seed,
+		Status:      "unknown",
+	}, nil
+}
+
 func Wire(ctx context.Context, c config.Config, mux *http.ServeMux) (func(), error) {
 	status := state.NewStatus()
 	registry := state.NewRegistry()
 	inbox := state.NewInbox()
+
+	for _, seed := range c.PeerSeeds {
+		peer, err := peerFromSeed(seed)
+		if err != nil {
+			return nil, err
+		}
+		if peer.ID == c.ID {
+			return nil, fmt.Errorf("peer seed %q refers to this node", seed)
+		}
+		if err := registry.Add(peer); err != nil {
+			return nil, fmt.Errorf("register peer seed %q: %w", seed, err)
+		}
+	}
 
 	var tcpListener net.Listener
 	var udpConn *net.UDPConn
@@ -78,7 +108,12 @@ func Wire(ctx context.Context, c config.Config, mux *http.ServeMux) (func(), err
 
 	// One bounded event bus is shared by this node's subscribers.
 	const maxStoredFileBytes int64 = 10 << 20
-	store, err := storage.New(filepath.Join("data", c.ID), maxStoredFileBytes)
+	dataDir := c.DataDir
+	if dataDir == "" {
+		dataDir = filepath.Join("data", c.ID)
+	}
+
+	store, err := storage.New(dataDir, maxStoredFileBytes)
 	if err != nil {
 		if tcpListener != nil {
 			_ = tcpListener.Close()
@@ -90,6 +125,20 @@ func Wire(ctx context.Context, c config.Config, mux *http.ServeMux) (func(), err
 			_ = grpcListener.Close()
 		}
 		return nil, fmt.Errorf("create file storage: %w", err)
+	}
+
+	// Restore committed files before the application starts serving requests.
+	if err := store.Recover(ctx); err != nil {
+		if tcpListener != nil {
+			_ = tcpListener.Close()
+		}
+		if udpConn != nil {
+			_ = udpConn.Close()
+		}
+		if grpcListener != nil {
+			_ = grpcListener.Close()
+		}
+		return nil, fmt.Errorf("recover file storage: %w", err)
 	}
 
 	storageCatalog, err := rpcfiles.NewStorageCatalog(store)

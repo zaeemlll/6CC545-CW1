@@ -181,3 +181,104 @@ func TestStoredFilesRejectsNonGetMethod(t *testing.T) {
 		t.Fatalf("Allow header = %q, want GET", got)
 	}
 }
+
+func TestStoredFileRejectsInvalidUploadRequests(t *testing.T) {
+	tests := []struct {
+		name       string
+		filename   string
+		size       string
+		content    []byte
+		contentLen int64
+		wantStatus int
+	}{
+		{
+			name:       "missing size",
+			filename:   "missing.txt",
+			content:    []byte("test"),
+			contentLen: 4,
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "invalid size",
+			filename:   "invalid.txt",
+			size:       "abc",
+			content:    []byte("test"),
+			contentLen: 4,
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "negative size",
+			filename:   "negative.txt",
+			size:       "-1",
+			contentLen: 0,
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "file too large",
+			filename:   "large.txt",
+			size:       "1025",
+			contentLen: 1025,
+			wantStatus: http.StatusRequestEntityTooLarge,
+		},
+		{
+			name:       "content length mismatch",
+			filename:   "mismatch.txt",
+			size:       "5",
+			content:    []byte("test"),
+			contentLen: 4,
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "invalid filename",
+			filename:   "../unsafe.txt",
+			size:       "4",
+			content:    []byte("test"),
+			contentLen: 4,
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "unsupported method",
+			filename:   "method.txt",
+			size:       "4",
+			content:    []byte("test"),
+			contentLen: 4,
+			wantStatus: http.StatusMethodNotAllowed,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			h, _ := newStoredFileTestHandler(t)
+
+			method := http.MethodPost
+			if tc.name == "unsupported method" {
+				method = http.MethodPut
+			}
+
+			request := httptest.NewRequest(
+				method,
+				"/v1/files/"+tc.filename,
+				bytes.NewReader(tc.content),
+			)
+			if tc.size != "" {
+				request.Header.Set("X-File-Size", tc.size)
+			}
+			request.Header.Set("X-File-SHA256", hex.EncodeToString(
+				sha256.New().Sum(nil),
+			))
+
+			if tc.contentLen >= 0 {
+				request.ContentLength = tc.contentLen
+			}
+
+			response := httptest.NewRecorder()
+			StoredFile(h.store, h.bus, h.nodeID, h.maxBytes).
+				ServeHTTP(response, request)
+
+			if response.Code != tc.wantStatus {
+				t.Fatalf("status = %d, want %d; body: %s",
+					response.Code, tc.wantStatus, response.Body.String())
+			}
+		})
+	}
+}

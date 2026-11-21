@@ -68,3 +68,103 @@ The temporary-file and rename approach was tested on the development macOS envir
 The tests verify the implemented behaviour on the stated development environment. They do not establish that recovery, multi-process shared-directory access, crash durability, TLS or authentication have been implemented.
 
 I used the supplied Week 7 workbook and integration guide. ChatGPT assisted with explanations, troubleshooting and documentation. I ran and checked the implementation and verification commands.
+
+## Week 8 — Deployment preparation, configuration and storage recovery
+
+### Task 8.1 — Deployment configuration
+
+Prepared a Docker Compose configuration for three independently configured Go nodes: node-a, node-b and node-c. Each node has a unique identity, its own data volume, HTTP and gRPC listening addresses, advertised service addresses and peer seed configuration.
+
+The nodes use a shared private bridge network and Docker service names for peer communication. HTTP ports 8081, 8082 and 8083 are published on host loopback and mapped to the internal port 8080. The internal gRPC port is 9090.
+
+Added a multi-stage Dockerfile. Its default application target is the actual node application (`./cmd/node`), rather than the deployment scaffold. The runtime is configured to use a non-root user, a read-only root filesystem and a temporary filesystem for `/tmp`.
+
+Added `.env.example`, `.dockerignore` and `.gitignore` to support configuration and exclude local secrets, generated binaries and unnecessary build files.
+
+### Task 8.2 — Configuration and application lifecycle
+
+Extended configuration to support HTTP and gRPC advertised addresses, a data directory and peer seed addresses. Environment variables and command-line flags are used to configure the application, with command-line flags taking precedence over environment variables and defaults.
+
+Added validation for container listening addresses, advertised addresses, peer addresses and data directory configuration. Updated application startup to recover the local file catalogue before serving requests.
+
+The `/healthz` endpoint checks local HTTP health. The `/readyz` endpoint reports local application readiness after startup and recovery. Readiness does not claim that every peer is available.
+
+### Task 8.3 — Storage recovery and persistence
+
+Added storage recovery to rebuild the metadata catalogue from committed files in the configured data directory. Recovery checks file names, file types, sizes and SHA-256 digests. It removes abandoned temporary files and rejects symbolic links.
+
+Tested the actual Go node locally using a temporary data directory. Uploaded a file, stopped the node gracefully, restarted it using the same directory and retrieved the recovered file. The returned content, size and SHA-256 metadata matched the original upload.
+
+This demonstrates local filesystem persistence across a graceful restart. I also tested Docker named-volume persistence by uploading a file to node-a, restarting its container and downloading the file again. The downloaded content matched the original file, and its SHA-256 hash remained unchanged.
+
+The three named Docker volumes also remained after `docker compose down`. The file itself was verified across a container restart, not across a complete Compose down and up cycle.
+
+### Task 8.4 — Remote-file and RPC validation
+
+Added HTTP remote-files tests for successful metadata retrieval, unavailable peers and request timeouts. Added RPC service validation tests for nil requests and a missing catalogue, checking the expected gRPC status codes.
+
+The normal and acceptance tests for the affected HTTP and RPC packages passed.
+
+### Task 8.5 — Verification results
+
+Tested locally on macOS 14.5, x86_64 Intel, using Go 1.27.1 darwin/amd64 with CGO enabled.
+
+The following commands completed successfully:
+
+- `go test -count=1 ./...`
+- `go test -count=1 -tags=acceptance ./...`
+- `go test -race -count=1 ./...`
+- `go test -race -count=1 -tags=acceptance ./...`
+- `go vet ./...`
+- `go build ./...`
+- `go mod verify`
+- `gofmt -l $(find . -name '*.go' -type f)`
+- `git diff --check`
+
+All test packages passed. The race-enabled test suites reported no race errors. Static analysis and the build completed without errors, all modules were verified, all Go files were formatted, and the whitespace check was clean.
+
+### Docker deployment and integration verification
+
+After installing an Intel-compatible version of Docker Desktop, I completed the Docker deployment checks on macOS 14.5, x86_64 Intel.
+
+The following checks passed:
+
+- Docker Compose configuration validation.
+- Docker image builds for node-a, node-b and node-c.
+- Three-node container deployment.
+- HTTP liveness and readiness checks for all three nodes.
+- Private Docker network and service DNS reachability between all three nodes.
+- Separate named volumes mounted at `/data` for each node.
+- File persistence after restarting the node-a container.
+- Clean shutdown using `docker compose down`, with all three named volumes remaining.
+
+The deployment results and test details are recorded in `evidence/week08/docker-environment.md` and `evidence/week08/storage-recovery.md`.
+
+The network tests demonstrate HTTP reachability between containers, not application-level peer registration or file replication. The persistence test demonstrates recovery after a container restart, not recovery after volume deletion or physical disk failure.
+
+The image identifiers recorded in the evidence are local Docker image IDs, not registry digests.
+
+The Docker deployment and Go quality checks were completed separately. The Go image version used for the lab should still be checked against the staff-approved environment before final submission.
+
+
+
+The additional live Docker acceptance checks also passed:
+
+- Remote gRPC metadata retrieval: a temporary gRPC client called node-b using its Compose service name and internal port 9090. The RPC returned `node_id=node-b` and an empty file list. The node-a HTTP remote-files endpoint also returned HTTP 200.
+- Storage isolation: uploaded `week08-isolation-test.txt` to node-a with HTTP 201. Requesting the same filename from node-b returned HTTP 404 `file_not_found`, confirming that the nodes use separate storage.
+- Peer stop and recovery: while node-b was stopped, node-a's remote-files endpoint returned HTTP 503 `peer_unavailable`. After node-b was restarted and became healthy, the same request returned HTTP 200 and identified node-b.
+
+These checks demonstrate remote metadata communication, independent node storage and recovery of remote communication after a peer restart. They do not demonstrate automatic file replication.
+
+I used the supplied Week 8 workbook and coursework materials. ChatGPT assisted with explanations, troubleshooting, code review and documentation. I ran the commands and checked the reported results.
+
+The Dockerfile test targets were also built and verified successfully:
+
+- `docker build --target test -f Dockerfile .` passed. It ran `CGO_ENABLED=1 go test -race ./... -count=1 -timeout 60s`.
+- `docker build --target acceptance -f Dockerfile .` passed. It ran `CGO_ENABLED=1 go test -race -tags acceptance ./... -count=1 -timeout 120s`.
+
+Both builds used `golang:1.27.3-bookworm`, which resolved to base image digest:
+
+    sha256:dc0963f32053e4bc451d24d87e3892d42d01021b61f093e98eb95c0352bb84b0
+
+This is the resolved base image digest, not a registry digest for the locally built application images. The teaching team's approval of the Go image version remains to be confirmed.

@@ -32,16 +32,21 @@ func Run(ctx context.Context, c config.Config) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { httpapi.ErrorJSON(w, 404, "not_found") })
 	mux.HandleFunc("/healthz", httpapi.Health(c.ID))
+	mux.HandleFunc("/readyz", httpapi.Readiness(c.ID))
 
 	stop, err := Wire(ctx, c, mux)
 	if err != nil {
+		// Cancellation during startup is a normal application shutdown.
+		if errors.Is(err, context.Canceled) && ctx.Err() != nil {
+			return nil
+		}
 		return err
 	}
 	defer stop()
 	srv := &http.Server{Handler: mux, ReadHeaderTimeout: c.Timeout, ReadTimeout: 2 * c.Timeout, WriteTimeout: 2 * c.Timeout, IdleTimeout: 30 * time.Second}
 	done := make(chan error, 1)
 	go func() { done <- srv.Serve(ln) }()
-	log.Printf("node=%s http=%s ready (loopback teaching service; no authentication)", c.ID, ln.Addr())
+	log.Printf("node=%s http=%s ready (no authentication)", c.ID, ln.Addr())
 	select {
 	case err = <-done:
 		if errors.Is(err, http.ErrServerClosed) {

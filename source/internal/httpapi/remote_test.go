@@ -1,12 +1,20 @@
 package httpapi
 
 import (
+	"context"
+	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
+	pb "example.edu/6cc545/cw1/api/files/v1"
+	"example.edu/6cc545/cw1/internal/model"
+	"example.edu/6cc545/cw1/internal/rpcfiles"
 	"example.edu/6cc545/cw1/internal/state"
+	"google.golang.org/grpc"
 )
 
 func TestWeek05_RemoteFilesValidation(t *testing.T) {
@@ -38,5 +46,173 @@ func TestWeek05_RemoteFilesValidation(t *testing.T) {
 				t.Fatalf("Allow header = %q, want GET", rec.Header().Get("Allow"))
 			}
 		})
+	}
+}
+func TestWeek08_RemoteFilesSuccessfulGRPCRequest(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	catalogue := state.NewCatalog()
+	if err := catalogue.Replace([]model.FileMetadata{
+		{
+			Name:         "remote.txt",
+			Size:         5,
+			SHA256:       strings.Repeat("a", 64),
+			ModifiedUnix: 123,
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	grpcServer := grpc.NewServer()
+	pb.RegisterFileServiceServer(grpcServer, &rpcfiles.Service{
+		NodeID:  "node-b",
+		Catalog: catalogue,
+	})
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = grpcServer.Serve(listener)
+	}()
+
+	defer func() {
+		grpcServer.Stop()
+		_ = listener.Close()
+		<-done
+	}()
+
+	registry := state.NewRegistry()
+	peer := model.Peer{
+		ID:          "node-b",
+		HTTPAddress: "127.0.0.1:8082",
+		GRPCAddress: listener.Addr().String(),
+		Status:      "unknown",
+	}
+	if err := registry.Add(peer); err != nil {
+		t.Fatal(err)
+	}
+
+	handler := RemoteFiles(registry, "node-a", time.Second)
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/v1/remote-files?peer_id=node-b",
+		nil,
+	)
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s",
+			response.Code, http.StatusOK, response.Body.String())
+	}
+
+	var result struct {
+		NodeID string               `json:"node_id"`
+		Files  []model.FileMetadata `json:"files"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+
+	if result.NodeID != "node-b" {
+		t.Fatalf("node ID = %q, want node-b", result.NodeID)
+	}
+	if len(result.Files) != 1 || result.Files[0].Name != "remote.txt" {
+		t.Fatalf("unexpected remote files: %+v", result.Files)
+	}
+}
+
+type slowRemoteFileService struct {
+	pb.UnimplementedFileServiceServer
+}
+
+func (slowRemoteFileService) ListFiles(
+	_ context.Context,
+	_ *pb.ListFilesRequest,
+) (*pb.ListFilesResponse, error) {
+	time.Sleep(100 * time.Millisecond)
+	return &pb.ListFilesResponse{NodeId: "node-b"}, nil
+}
+
+func TestWeek08_RemoteFilesUnavailablePeer(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	address := listener.Addr().String()
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	registry := state.NewRegistry()
+	if err := registry.Add(model.Peer{
+		ID:          "node-b",
+		HTTPAddress: "127.0.0.1:8082",
+		GRPCAddress: address,
+		Status:      "unknown",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	handler := RemoteFiles(registry, "node-a", time.Second)
+	request := httptest.NewRequest(
+		http.MethodGet, "/v1/remote-files?peer_id=node-b", nil,
+	)
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d; body: %s",
+			response.Code, http.StatusServiceUnavailable, response.Body.String())
+	}
+}
+
+func TestWeek08_RemoteFilesTimeout(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	grpcServer := grpc.NewServer()
+	pb.RegisterFileServiceServer(grpcServer, slowRemoteFileService{})
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = grpcServer.Serve(listener)
+	}()
+
+	defer func() {
+		grpcServer.Stop()
+		_ = listener.Close()
+		<-done
+	}()
+
+	registry := state.NewRegistry()
+	if err := registry.Add(model.Peer{
+		ID:          "node-b",
+		HTTPAddress: "127.0.0.1:8082",
+		GRPCAddress: listener.Addr().String(),
+		Status:      "unknown",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	handler := RemoteFiles(registry, "node-a", 10*time.Millisecond)
+	request := httptest.NewRequest(
+		http.MethodGet, "/v1/remote-files?peer_id=node-b", nil,
+	)
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusGatewayTimeout {
+		t.Fatalf("status = %d, want %d; body: %s",
+			response.Code, http.StatusGatewayTimeout, response.Body.String())
 	}
 }

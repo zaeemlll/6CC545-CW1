@@ -1,0 +1,17 @@
+# Week 8 deployment and generated binary exclusions.
+/secrets/
+/.env
+/source/bin/
+/source/*.exe
+**/*.key
+**/*.pem
+
+/source/node
+/source/deploycheck
+/source/probe
+
+# Generated certificates and credential bundles.
+**/*.crt
+**/*.cer
+**/*.p12
+**/*.pfx

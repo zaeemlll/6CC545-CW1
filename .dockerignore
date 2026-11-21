@@ -1,0 +1,13 @@
+.git
+.env
+secrets
+evidence
+**/*.key
+**/*.pem
+**/*.zip
+**/bin
+**/.DS_Store
+**/*.crt
+**/*.cer
+**/*.p12
+**/*.pfx

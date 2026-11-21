@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -60,5 +61,36 @@ func TestMyWeek01_HealthWrongMethodDetails(t *testing.T) {
 	}
 	if got["error"] != "method_not_allowed" {
 		t.Fatalf("unexpected error response: %v", got)
+	}
+}
+
+func TestWeek08_Readiness(t *testing.T) {
+	rr := httptest.NewRecorder()
+	Readiness("node-a").ServeHTTP(rr, httptest.NewRequest("GET", "/readyz", nil))
+
+	var got struct {
+		Status string `json:"status"`
+		NodeID string `json:"node_id"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if rr.Code != http.StatusOK || got.Status != "ready" || got.NodeID != "node-a" {
+		t.Fatalf("incorrect readiness response: %d %s", rr.Code, rr.Body.String())
+	}
+	if !strings.HasPrefix(rr.Header().Get("Content-Type"), "application/json") {
+		t.Fatal("missing JSON content type")
+	}
+}
+
+func TestWeek08_ReadinessWrongMethod(t *testing.T) {
+	rr := httptest.NewRecorder()
+	Readiness("node-a").ServeHTTP(rr, httptest.NewRequest("POST", "/readyz", nil))
+
+	if rr.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("want status 405, got %d", rr.Code)
+	}
+	if rr.Header().Get("Allow") != "GET" {
+		t.Fatalf("want Allow: GET, got %q", rr.Header().Get("Allow"))
 	}
 }
