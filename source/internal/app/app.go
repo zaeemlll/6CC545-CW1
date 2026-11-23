@@ -2,13 +2,16 @@ package app
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"example.edu/6cc545/cw1/internal/config"
 	"example.edu/6cc545/cw1/internal/httpapi"
+	"example.edu/6cc545/cw1/internal/security"
 	"fmt"
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"time"
 )
 
@@ -43,10 +46,46 @@ func Run(ctx context.Context, c config.Config) error {
 		return err
 	}
 	defer stop()
-	srv := &http.Server{Handler: mux, ReadHeaderTimeout: c.Timeout, ReadTimeout: 2 * c.Timeout, WriteTimeout: 2 * c.Timeout, IdleTimeout: 30 * time.Second}
+
+	handler := http.Handler(mux)
+	var publicTLSConfig *tls.Config
+
+	if c.SecurityMode == "required" {
+		jwtKey, err := os.ReadFile(c.JWTKeyFile)
+		if err != nil {
+			return fmt.Errorf("read JWT signing key: %w", err)
+		}
+
+		validator := security.TokenValidator{
+			Key:      jwtKey,
+			Issuer:   c.JWTIssuer,
+			Audience: c.JWTAudience,
+		}
+		handler = security.PublicAPI(validator, mux)
+
+		publicTLSConfig, err = security.ServerTLS(
+			c.TLSCertFile,
+			c.TLSKeyFile,
+			c.CAFile,
+			false,
+		)
+		if err != nil {
+			return fmt.Errorf("configure public HTTPS: %w", err)
+		}
+	}
+
+	srv := &http.Server{Handler: handler, ReadHeaderTimeout: c.Timeout, ReadTimeout: 2 * c.Timeout, WriteTimeout: 2 * c.Timeout, IdleTimeout: 30 * time.Second}
+	serveListener := net.Listener(ln)
+	protocol := "http"
+
+	if publicTLSConfig != nil {
+		serveListener = tls.NewListener(ln, publicTLSConfig)
+		protocol = "https"
+	}
+
 	done := make(chan error, 1)
-	go func() { done <- srv.Serve(ln) }()
-	log.Printf("node=%s http=%s ready (no authentication)", c.ID, ln.Addr())
+	go func() { done <- srv.Serve(serveListener) }()
+	log.Printf("node=%s %s=%s ready", c.ID, protocol, ln.Addr())
 	select {
 	case err = <-done:
 		if errors.Is(err, http.ErrServerClosed) {

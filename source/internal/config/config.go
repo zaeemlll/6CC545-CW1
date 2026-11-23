@@ -16,17 +16,26 @@ import (
 
 // Config is process-local. Ports must differ between simultaneously running nodes.
 type Config struct {
-	ID            string
-	HTTP          string
-	TCP           string
-	UDP           string
-	GRPC          string
-	Seed          string
-	Timeout       time.Duration
-	HTTPAdvertise string
-	GRPCAdvertise string
-	DataDir       string
-	PeerSeeds     []string
+	ID                string
+	HTTP              string
+	TCP               string
+	UDP               string
+	GRPC              string
+	Seed              string
+	Timeout           time.Duration
+	HTTPAdvertise     string
+	GRPCAdvertise     string
+	DataDir           string
+	PeerSeeds         []string
+	PeerHTTP          string
+	PeerHTTPAdvertise string
+	TLSCertFile       string
+	TLSKeyFile        string
+	CAFile            string
+	JWTKeyFile        string
+	JWTIssuer         string
+	JWTAudience       string
+	SecurityMode      string
 }
 
 // Parse reads command-line arguments and validates the resulting configuration.
@@ -45,6 +54,15 @@ func Parse(args []string, out io.Writer) (Config, error) {
 	envString("HTTP_ADVERTISE", &c.HTTPAdvertise)
 	envString("GRPC_ADVERTISE", &c.GRPCAdvertise)
 	envString("DATA_DIR", &c.DataDir)
+	envString("PEER_HTTP_ADDR", &c.PeerHTTP)
+	envString("PEER_HTTP_ADVERTISE", &c.PeerHTTPAdvertise)
+	envString("TLS_CERT_FILE", &c.TLSCertFile)
+	envString("TLS_KEY_FILE", &c.TLSKeyFile)
+	envString("CA_FILE", &c.CAFile)
+	envString("JWT_KEY_FILE", &c.JWTKeyFile)
+	envString("JWT_ISSUER", &c.JWTIssuer)
+	envString("JWT_AUDIENCE", &c.JWTAudience)
+	envString("SECURITY_MODE", &c.SecurityMode)
 
 	if seeds, ok := os.LookupEnv("PEER_SEEDS"); ok {
 		c.PeerSeeds = parsePeerSeeds(seeds)
@@ -63,9 +81,18 @@ func Parse(args []string, out io.Writer) (Config, error) {
 	f.StringVar(&c.HTTPAdvertise, "http-advertise", c.HTTPAdvertise, "advertised HTTP URL")
 	f.StringVar(&c.GRPCAdvertise, "grpc-advertise", c.GRPCAdvertise, "advertised gRPC host and port")
 	f.StringVar(&c.DataDir, "data-dir", c.DataDir, "file storage directory")
+	f.StringVar(&c.PeerHTTP, "peer-http", c.PeerHTTP, "private peer HTTPS listen address")
+	f.StringVar(&c.PeerHTTPAdvertise, "peer-http-advertise", c.PeerHTTPAdvertise, "advertised private peer HTTPS URL")
+	f.StringVar(&c.TLSCertFile, "tls-cert-file", c.TLSCertFile, "node TLS certificate file")
+	f.StringVar(&c.TLSKeyFile, "tls-key-file", c.TLSKeyFile, "node TLS private key file")
+	f.StringVar(&c.CAFile, "ca-file", c.CAFile, "trusted CA certificate file")
+	f.StringVar(&c.JWTKeyFile, "jwt-key-file", c.JWTKeyFile, "JWT signing key file")
+	f.StringVar(&c.JWTIssuer, "jwt-issuer", c.JWTIssuer, "required JWT issuer")
+	f.StringVar(&c.JWTAudience, "jwt-audience", c.JWTAudience, "required JWT audience")
+	f.StringVar(&c.SecurityMode, "security-mode", c.SecurityMode, "security mode (required)")
 
 	peerSeeds := strings.Join(c.PeerSeeds, ",")
-	f.StringVar(&peerSeeds, "peer-seeds", peerSeeds, "comma-separated peer gRPC addresses")
+	f.StringVar(&peerSeeds, "peer-seeds", peerSeeds, "comma-separated peer addresses (host:port locally, HTTPS URLs in required mode)")
 
 	if err := f.Parse(args); err != nil {
 		return c, err
@@ -183,7 +210,19 @@ func validPort(port string) bool {
 
 func validHTTPAdvertise(value string) bool {
 	u, err := url.Parse(value)
-	if err != nil || u.Scheme != "http" || u.Host == "" ||
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" ||
+		u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return false
+	}
+	if u.Path != "" && u.Path != "/" {
+		return false
+	}
+	return ValidPeerAddress(u.Host)
+}
+
+func ValidPeerHTTPSURL(value string) bool {
+	u, err := url.Parse(value)
+	if err != nil || u.Scheme != "https" || u.Host == "" ||
 		u.User != nil || u.RawQuery != "" || u.Fragment != "" {
 		return false
 	}
@@ -261,9 +300,60 @@ func (c Config) Validate() error {
 		}
 	}
 
-	for _, seed := range c.PeerSeeds {
-		if !ValidPeerAddress(seed) {
-			return fmt.Errorf("invalid peer seed %q: use a valid host and port", seed)
+	if c.SecurityMode != "" && c.SecurityMode != "required" {
+		return fmt.Errorf("invalid security mode %q: use required or leave empty for local development", c.SecurityMode)
+	}
+
+	if c.SecurityMode == "required" {
+		requiredValues := map[string]string{
+			"TLS_CERT_FILE": c.TLSCertFile,
+			"TLS_KEY_FILE":  c.TLSKeyFile,
+			"CA_FILE":       c.CAFile,
+			"JWT_KEY_FILE":  c.JWTKeyFile,
+			"JWT_ISSUER":    c.JWTIssuer,
+			"JWT_AUDIENCE":  c.JWTAudience,
+		}
+		for name, value := range requiredValues {
+			if strings.TrimSpace(value) == "" {
+				return fmt.Errorf("%s is required when SECURITY_MODE=required", name)
+			}
+		}
+
+		if c.HTTPAdvertise == "" {
+			return fmt.Errorf("HTTP_ADVERTISE is required when SECURITY_MODE=required")
+		}
+		advertisedHTTP, _ := url.Parse(c.HTTPAdvertise)
+		if advertisedHTTP.Scheme != "https" {
+			return fmt.Errorf("HTTP_ADVERTISE must use HTTPS when SECURITY_MODE=required")
+		}
+
+		if c.GRPC == "" || c.GRPCAdvertise == "" {
+			return fmt.Errorf("GRPC_ADDR and GRPC_ADVERTISE are required when SECURITY_MODE=required")
+		}
+
+		if !validListenAddress(c.PeerHTTP) {
+			return fmt.Errorf("invalid private peer HTTP address %q", c.PeerHTTP)
+		}
+		if !ValidPeerHTTPSURL(c.PeerHTTPAdvertise) {
+			return fmt.Errorf("invalid private peer HTTPS URL %q", c.PeerHTTPAdvertise)
+		}
+
+		peerURL, _ := url.Parse(c.PeerHTTPAdvertise)
+		if peerURL.Hostname() != c.ID {
+			return fmt.Errorf("private peer HTTPS hostname %q does not match node ID %q",
+				peerURL.Hostname(), c.ID)
+		}
+
+		for _, seed := range c.PeerSeeds {
+			if !ValidPeerHTTPSURL(seed) {
+				return fmt.Errorf("invalid secure peer seed %q: use an HTTPS URL with a valid host and port", seed)
+			}
+		}
+	} else {
+		for _, seed := range c.PeerSeeds {
+			if !ValidPeerAddress(seed) {
+				return fmt.Errorf("invalid peer seed %q: use a valid host and port", seed)
+			}
 		}
 	}
 

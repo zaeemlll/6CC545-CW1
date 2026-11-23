@@ -284,3 +284,70 @@ func TestWeek08_WireRejectsInvalidPeerSeeds(t *testing.T) {
 		})
 	}
 }
+
+func TestWeek09_PeerFromSeed(t *testing.T) {
+	tests := []struct {
+		name     string
+		seed     string
+		wantID   string
+		wantHTTP string
+		wantGRPC string
+		wantErr  bool
+	}{
+		{
+			name:     "Week 8 host and port",
+			seed:     "node-b:9092",
+			wantID:   "node-b",
+			wantHTTP: "node-b:8080",
+			wantGRPC: "node-b:9092",
+		},
+		{
+			name:     "Week 9 HTTPS seed",
+			seed:     "https://node-b:9444",
+			wantID:   "node-b",
+			wantHTTP: "https://node-b:9444",
+			wantGRPC: "node-b:9443",
+		},
+		{
+			name:    "insecure HTTP seed",
+			seed:    "http://node-b:9444",
+			wantErr: true,
+		},
+		{
+			name:    "HTTPS seed missing port",
+			seed:    "https://node-b",
+			wantErr: true,
+		},
+		{
+			name:    "HTTPS seed with path",
+			seed:    "https://node-b:9444/files",
+			wantErr: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			peer, err := peerFromSeed(tc.seed)
+
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("expected invalid seed to be rejected")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("peerFromSeed returned an error: %v", err)
+			}
+			if peer.ID != tc.wantID {
+				t.Errorf("ID = %q, want %q", peer.ID, tc.wantID)
+			}
+			if peer.HTTPAddress != tc.wantHTTP {
+				t.Errorf("HTTPAddress = %q, want %q", peer.HTTPAddress, tc.wantHTTP)
+			}
+			if peer.GRPCAddress != tc.wantGRPC {
+				t.Errorf("GRPCAddress = %q, want %q", peer.GRPCAddress, tc.wantGRPC)
+			}
+		})
+	}
+}

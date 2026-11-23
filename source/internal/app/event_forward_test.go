@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"example.edu/6cc545/cw1/internal/config"
 	"example.edu/6cc545/cw1/internal/events"
 	"example.edu/6cc545/cw1/internal/model"
 	"example.edu/6cc545/cw1/internal/state"
@@ -59,6 +60,7 @@ func TestForwardEventToPeers(t *testing.T) {
 		registry,
 		"node-a",
 		event,
+		config.Config{},
 	); err != nil {
 		t.Fatalf("forward event: %v", err)
 	}
@@ -102,6 +104,7 @@ func TestForwardEventSkipsLocalNode(t *testing.T) {
 		registry,
 		"node-a",
 		event,
+		config.Config{},
 	); err != nil {
 		t.Fatalf("forward event: %v", err)
 	}
@@ -142,6 +145,7 @@ func TestForwardEventRejectsUnsuccessfulPeerResponse(t *testing.T) {
 		registry,
 		"node-a",
 		event,
+		config.Config{},
 	)
 
 	if err == nil {

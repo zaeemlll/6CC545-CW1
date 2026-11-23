@@ -1,0 +1,131 @@
+# Week 9 secure three-node deployment.
+# Run from the submission root with:
+# docker compose -f compose.secure.yaml up --build -d
+name: cw2-secure
+
+x-node: &node
+  build:
+    context: .
+    dockerfile: Dockerfile
+    args:
+      GO_IMAGE: ${GO_IMAGE:-golang:1.27.3-bookworm}
+      APP_PACKAGE: ${APP_PACKAGE:-./cmd/node}
+  init: true
+  read_only: true
+  user: "65532:65532"
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  tmpfs:
+    - /tmp
+  networks:
+    - peers
+  healthcheck:
+    test:
+      - CMD
+      - /app/probe
+      - -url
+      - https://127.0.0.1:8443/healthz
+      - -ca
+      - /run/secrets/ca.crt
+    interval: 5s
+    timeout: 3s
+    retries: 6
+    start_period: 10s
+  stop_grace_period: 10s
+  restart: "no"
+
+services:
+  node-a:
+    <<: *node
+    environment:
+      NODE_ID: node-a
+      HTTP_ADDR: 0.0.0.0:8443
+      GRPC_ADDR: 0.0.0.0:9443
+      PEER_HTTP_ADDR: 0.0.0.0:9444
+      HTTP_ADVERTISE: https://node-a:8443
+      GRPC_ADVERTISE: node-a:9443
+      PEER_HTTP_ADVERTISE: https://node-a:9444
+      PEER_SEEDS: https://node-b:9444,https://node-c:9444
+      DATA_DIR: /data
+      SECURITY_MODE: required
+      TLS_CERT_FILE: /run/secrets/node.crt
+      TLS_KEY_FILE: /run/secrets/node.key
+      CA_FILE: /run/secrets/ca.crt
+      JWT_KEY_FILE: /run/secrets/jwt.key
+      JWT_ISSUER: cw2-lab
+      JWT_AUDIENCE: cw2-api
+    ports:
+      - "127.0.0.1:8441:8443"
+    volumes:
+      - data-a:/data
+      - ./secrets/ca.crt:/run/secrets/ca.crt:ro
+      - ./secrets/jwt.key:/run/secrets/jwt.key:ro
+      - ./secrets/node-a/server.crt:/run/secrets/node.crt:ro
+      - ./secrets/node-a/server.key:/run/secrets/node.key:ro
+
+  node-b:
+    <<: *node
+    environment:
+      NODE_ID: node-b
+      HTTP_ADDR: 0.0.0.0:8443
+      GRPC_ADDR: 0.0.0.0:9443
+      PEER_HTTP_ADDR: 0.0.0.0:9444
+      HTTP_ADVERTISE: https://node-b:8443
+      GRPC_ADVERTISE: node-b:9443
+      PEER_HTTP_ADVERTISE: https://node-b:9444
+      PEER_SEEDS: https://node-a:9444,https://node-c:9444
+      DATA_DIR: /data
+      SECURITY_MODE: required
+      TLS_CERT_FILE: /run/secrets/node.crt
+      TLS_KEY_FILE: /run/secrets/node.key
+      CA_FILE: /run/secrets/ca.crt
+      JWT_KEY_FILE: /run/secrets/jwt.key
+      JWT_ISSUER: cw2-lab
+      JWT_AUDIENCE: cw2-api
+    ports:
+      - "127.0.0.1:8442:8443"
+    volumes:
+      - data-b:/data
+      - ./secrets/ca.crt:/run/secrets/ca.crt:ro
+      - ./secrets/jwt.key:/run/secrets/jwt.key:ro
+      - ./secrets/node-b/server.crt:/run/secrets/node.crt:ro
+      - ./secrets/node-b/server.key:/run/secrets/node.key:ro
+
+  node-c:
+    <<: *node
+    environment:
+      NODE_ID: node-c
+      HTTP_ADDR: 0.0.0.0:8443
+      GRPC_ADDR: 0.0.0.0:9443
+      PEER_HTTP_ADDR: 0.0.0.0:9444
+      HTTP_ADVERTISE: https://node-c:8443
+      GRPC_ADVERTISE: node-c:9443
+      PEER_HTTP_ADVERTISE: https://node-c:9444
+      PEER_SEEDS: https://node-a:9444,https://node-b:9444
+      DATA_DIR: /data
+      SECURITY_MODE: required
+      TLS_CERT_FILE: /run/secrets/node.crt
+      TLS_KEY_FILE: /run/secrets/node.key
+      CA_FILE: /run/secrets/ca.crt
+      JWT_KEY_FILE: /run/secrets/jwt.key
+      JWT_ISSUER: cw2-lab
+      JWT_AUDIENCE: cw2-api
+    ports:
+      - "127.0.0.1:8443:8443"
+    volumes:
+      - data-c:/data
+      - ./secrets/ca.crt:/run/secrets/ca.crt:ro
+      - ./secrets/jwt.key:/run/secrets/jwt.key:ro
+      - ./secrets/node-c/server.crt:/run/secrets/node.crt:ro
+      - ./secrets/node-c/server.key:/run/secrets/node.key:ro
+
+networks:
+  peers:
+    driver: bridge
+
+volumes:
+  data-a:
+  data-b:
+  data-c:

@@ -24,7 +24,11 @@ func (p Peer) Validate() error {
 	if !config.ValidID(p.ID) {
 		return errors.New("invalid peer ID")
 	}
-	if !config.ValidPeerAddress(p.HTTPAddress) {
+	validHTTP := config.ValidPeerAddress(p.HTTPAddress)
+	if strings.HasPrefix(p.HTTPAddress, "https://") {
+		validHTTP = config.ValidPeerHTTPSURL(p.HTTPAddress)
+	}
+	if !validHTTP {
 		return errors.New("invalid HTTP address")
 	}
 	if !config.ValidPeerAddress(p.GRPCAddress) {

@@ -2,17 +2,23 @@ package app
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"log"
 	"net"
 	"net/http"
+	"net/url"
+	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
 	pb "example.edu/6cc545/cw1/api/files/v1"
 	"example.edu/6cc545/cw1/internal/rpcfiles"
+	"example.edu/6cc545/cw1/internal/security"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 
 	"example.edu/6cc545/cw1/internal/config"
 	"example.edu/6cc545/cw1/internal/events"
@@ -24,12 +30,52 @@ import (
 )
 
 func CheckStage(c config.Config) error {
+	if c.SecurityMode != "required" {
+		return nil
+	}
+
+	if _, err := security.ServerTLS(
+		c.TLSCertFile,
+		c.TLSKeyFile,
+		c.CAFile,
+		false,
+	); err != nil {
+		return fmt.Errorf("check TLS configuration: %w", err)
+	}
+
+	key, err := os.ReadFile(c.JWTKeyFile)
+	if err != nil {
+		return fmt.Errorf("read JWT signing key: %w", err)
+	}
+	if len(key) < 32 {
+		return fmt.Errorf("JWT signing key must contain at least 32 bytes")
+	}
+
 	return nil
 }
 
 // peerFromSeed converts a Compose gRPC seed into the peer HTTP and gRPC
 // service addresses. The Week 8 Compose network uses HTTP port 8080.
 func peerFromSeed(seed string) (model.Peer, error) {
+	if strings.HasPrefix(seed, "https://") {
+		parsed, err := url.Parse(seed)
+		if err != nil || !config.ValidPeerHTTPSURL(seed) {
+			return model.Peer{}, fmt.Errorf("invalid secure peer seed %q", seed)
+		}
+
+		host := parsed.Hostname()
+		if !config.ValidID(host) {
+			return model.Peer{}, fmt.Errorf("invalid peer seed %q: host must be a valid node ID", seed)
+		}
+
+		return model.Peer{
+			ID:          host,
+			HTTPAddress: seed,
+			GRPCAddress: net.JoinHostPort(host, "9443"),
+			Status:      "unknown",
+		}, nil
+	}
+
 	host, _, err := net.SplitHostPort(seed)
 	if err != nil || !config.ValidID(host) {
 		return model.Peer{}, fmt.Errorf("invalid peer seed %q: host must be a valid node ID", seed)
@@ -61,9 +107,36 @@ func Wire(ctx context.Context, c config.Config, mux *http.ServeMux) (func(), err
 		}
 	}
 
+	var grpcJWTValidator security.TokenValidator
+	if c.SecurityMode == "required" {
+		jwtKey, err := os.ReadFile(c.JWTKeyFile)
+		if err != nil {
+			return nil, fmt.Errorf("read gRPC JWT signing key: %w", err)
+		}
+		grpcJWTValidator = security.TokenValidator{
+			Key:      jwtKey,
+			Issuer:   c.JWTIssuer,
+			Audience: c.JWTAudience,
+		}
+	}
+
 	var tcpListener net.Listener
 	var udpConn *net.UDPConn
 	var grpcListener net.Listener
+
+	var grpcTLSConfig *tls.Config
+	if c.SecurityMode == "required" {
+		var err error
+		grpcTLSConfig, err = security.ServerTLS(
+			c.TLSCertFile,
+			c.TLSKeyFile,
+			c.CAFile,
+			true,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("configure gRPC mutual TLS: %w", err)
+		}
+	}
 
 	if c.TCP != "" {
 		ln, err := net.Listen("tcp", c.TCP)
@@ -222,10 +295,74 @@ func Wire(ctx context.Context, c config.Config, mux *http.ServeMux) (func(), err
 	mux.HandleFunc("/v1/files", httpapi.StoredFiles(store))
 	mux.HandleFunc("/v1/files/", httpapi.StoredFile(store, eventBus, c.ID, maxStoredFileBytes))
 	mux.HandleFunc("/v1/messages", httpapi.Messages(inbox))
-	mux.HandleFunc("/v1/remote-files", httpapi.RemoteFiles(registry, c.ID, c.Timeout))
+	mux.HandleFunc("/v1/remote-files", httpapi.RemoteFiles(registry, c.ID, c.Timeout, c))
 	mux.HandleFunc("/v1/events", httpapi.Events(eventBus))
 
 	runCtx, cancel := context.WithCancel(ctx)
+
+	var peerHTTPListener net.Listener
+	var peerHTTPServer *http.Server
+	var peerHTTPDone chan struct{}
+	var peerTLSConfig *tls.Config
+
+	if c.SecurityMode == "required" {
+		var err error
+		peerTLSConfig, err = security.ServerTLS(
+			c.TLSCertFile,
+			c.TLSKeyFile,
+			c.CAFile,
+			true,
+		)
+		if err != nil {
+			cancel()
+			auditSub.Cancel()
+			metricsSub.Cancel()
+			forwardSub.Cancel()
+			_ = eventBus.Close()
+			if tcpListener != nil {
+				_ = tcpListener.Close()
+			}
+			if udpConn != nil {
+				_ = udpConn.Close()
+			}
+			if grpcListener != nil {
+				_ = grpcListener.Close()
+			}
+			return nil, fmt.Errorf("configure private peer HTTPS: %w", err)
+		}
+
+		peerHTTPListener, err = net.Listen("tcp", c.PeerHTTP)
+		if err != nil {
+			cancel()
+			auditSub.Cancel()
+			metricsSub.Cancel()
+			forwardSub.Cancel()
+			_ = eventBus.Close()
+			if tcpListener != nil {
+				_ = tcpListener.Close()
+			}
+			if udpConn != nil {
+				_ = udpConn.Close()
+			}
+			if grpcListener != nil {
+				_ = grpcListener.Close()
+			}
+			return nil, fmt.Errorf("listen private peer HTTPS %s: %w", c.PeerHTTP, err)
+		}
+
+		peerMux := http.NewServeMux()
+		peerMux.HandleFunc("/v1/peer/announce", httpapi.PeerAnnounce(eventBus, registry))
+		peerMux.HandleFunc("/v1/peer/files/", httpapi.PeerFiles(store, registry, maxStoredFileBytes))
+
+		peerHTTPServer = &http.Server{
+			Handler:           peerMux,
+			ReadHeaderTimeout: c.Timeout,
+			ReadTimeout:       2 * c.Timeout,
+			WriteTimeout:      2 * c.Timeout,
+			IdleTimeout:       30 * time.Second,
+		}
+	}
+
 	var wg sync.WaitGroup
 	var stopOnce sync.Once
 
@@ -282,7 +419,7 @@ func Wire(ctx context.Context, c config.Config, mux *http.ServeMux) (func(), err
 				runCtx,
 				sub,
 				func(sendCtx context.Context, event events.Event) error {
-					return forwardEventToPeers(sendCtx, registry, c.ID, event)
+					return forwardEventToPeers(sendCtx, registry, c.ID, event, c)
 				},
 			)
 			if runCtx.Err() != nil {
@@ -305,13 +442,23 @@ func Wire(ctx context.Context, c config.Config, mux *http.ServeMux) (func(), err
 	var grpcDone chan struct{}
 
 	if grpcListener != nil {
-		grpcServer = grpc.NewServer(
+		grpcOptions := []grpc.ServerOption{
 			grpc.MaxRecvMsgSize(4096),
 			grpc.MaxSendMsgSize(65536),
-		)
+		}
+		if grpcTLSConfig != nil {
+			grpcOptions = append(
+				grpcOptions,
+				grpc.Creds(credentials.NewTLS(grpcTLSConfig)),
+				grpc.UnaryInterceptor(security.GRPCUnary(grpcJWTValidator, "reader")),
+			)
+		}
+
+		grpcServer = grpc.NewServer(grpcOptions...)
 		pb.RegisterFileServiceServer(grpcServer, &rpcfiles.Service{
-			NodeID:  c.ID,
-			Catalog: storageCatalog,
+			NodeID:              c.ID,
+			Catalog:             storageCatalog,
+			RequirePeerIdentity: c.SecurityMode == "required",
 		})
 
 		grpcDone = make(chan struct{})
@@ -324,9 +471,35 @@ func Wire(ctx context.Context, c config.Config, mux *http.ServeMux) (func(), err
 		log.Printf("node=%s grpc=%s ready", c.ID, grpcListener.Addr())
 	}
 
+	if peerHTTPListener != nil {
+		peerHTTPDone = make(chan struct{})
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer close(peerHTTPDone)
+
+			listener := tls.NewListener(peerHTTPListener, peerTLSConfig)
+			if err := peerHTTPServer.Serve(listener); err != nil && runCtx.Err() == nil {
+				log.Printf("private peer HTTPS server stopped: %v", err)
+			}
+		}()
+		log.Printf("node=%s peer-https=%s ready", c.ID, peerHTTPListener.Addr())
+	}
+
 	stop := func() {
 		stopOnce.Do(func() {
 			cancel()
+
+			if peerHTTPServer != nil {
+				shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), c.Timeout)
+				err := peerHTTPServer.Shutdown(shutdownCtx)
+				shutdownCancel()
+				if err != nil {
+					_ = peerHTTPServer.Close()
+				}
+				<-peerHTTPDone
+			}
+
 			_ = eventBus.Close()
 
 			if tcpListener != nil {

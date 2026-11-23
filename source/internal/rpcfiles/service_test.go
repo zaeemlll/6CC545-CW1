@@ -3,6 +3,7 @@ package rpcfiles
 import (
 	"context"
 	pb "example.edu/6cc545/cw1/api/files/v1"
+	"example.edu/6cc545/cw1/internal/config"
 	"example.edu/6cc545/cw1/internal/model"
 	"example.edu/6cc545/cw1/internal/state"
 	"google.golang.org/grpc"
@@ -28,14 +29,14 @@ func TestWeek05_RemoteList(t *testing.T) {
 	done := make(chan struct{})
 	go func() { defer close(done); _ = s.Serve(ln) }()
 	defer func() { s.Stop(); _ = ln.Close(); <-done }()
-	got, e := Fetch(context.Background(), ln.Addr().String(), "node-a", time.Second)
+	got, e := Fetch(context.Background(), ln.Addr().String(), "node-b", "node-a", time.Second, config.Config{})
 	if e != nil {
 		t.Fatal(e)
 	}
 	if got.GetNodeId() != "node-b" || len(got.GetFiles()) != 1 || got.Files[0].GetName() != "notes.txt" {
 		t.Fatalf("wrong remote result: %v", got)
 	}
-	_, e = Fetch(context.Background(), ln.Addr().String(), "", time.Second)
+	_, e = Fetch(context.Background(), ln.Addr().String(), "node-b", "", time.Second, config.Config{})
 	if status.Code(e) != codes.InvalidArgument {
 		t.Fatalf("empty requester: want InvalidArgument got %v", e)
 	}
@@ -48,7 +49,7 @@ func TestWeek05_Unavailable(t *testing.T) {
 	addr := ln.Addr().String()
 	_ = ln.Close()
 	start := time.Now()
-	_, e = Fetch(context.Background(), addr, "node-a", 250*time.Millisecond)
+	_, e = Fetch(context.Background(), addr, "node-b", "node-a", 250*time.Millisecond, config.Config{})
 	if e == nil {
 		t.Fatal("unavailable peer returned success")
 	}
@@ -110,6 +111,23 @@ func TestWeek08_ServiceRejectsMissingCatalogue(t *testing.T) {
 	)
 	if status.Code(err) != codes.Internal {
 		t.Fatalf("status = %v, want Internal; error: %v",
+			status.Code(err), err)
+	}
+}
+
+func TestWeek09_ServiceRequiresVerifiedPeerIdentity(t *testing.T) {
+	svc := &Service{
+		NodeID:              "node-b",
+		Catalog:             state.NewCatalog(),
+		RequirePeerIdentity: true,
+	}
+
+	_, err := svc.ListFiles(
+		context.Background(),
+		&pb.ListFilesRequest{RequesterId: "node-a"},
+	)
+	if status.Code(err) != codes.Unauthenticated {
+		t.Fatalf("status = %v, want Unauthenticated; error: %v",
 			status.Code(err), err)
 	}
 }

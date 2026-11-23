@@ -15,7 +15,7 @@ RUN CGO_ENABLED=0 go build -trimpath -o /out/probe ./cmd/probe
 FROM build AS test
 RUN CGO_ENABLED=1 go test -race ./... -count=1 -timeout 60s
 
-# Feature target: runs the Week 8 acceptance test suite.
+# Feature target: runs the acceptance test suite.
 FROM build AS acceptance
 RUN CGO_ENABLED=1 go test -race -tags acceptance ./... -count=1 -timeout 120s
 

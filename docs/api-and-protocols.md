@@ -539,16 +539,89 @@ system's health.
 
 ### Deployment verification and limitations
 
-The Compose file defines the intended three-node configuration, but
-Docker deployment was not verified in the development environment.
-The available Docker executables were incompatible with the Intel Mac,
-and the Docker Compose command was unavailable.
+The Week 8 deployment was verified on macOS 14.5 (Intel x86_64) using
+Docker Desktop. The three services built and started successfully. Health
+checks passed, cross-container gRPC metadata retrieval was tested, and
+separate named volumes were checked for storage isolation and persistence
+after a container restart. The detailed results are recorded in the
+Week 8 evidence files.
 
-Therefore, Compose configuration validation, image builds, container
-startup, real cross-container gRPC calls, volume persistence inside
-containers and container restart tests remain unverified. Local Go tests
-and local storage recovery tests do not replace these deployment tests.
+The original Week 8 Compose configuration uses plaintext communication.
+The separate Week 9 secure Compose configuration adds TLS and peer
+authentication without changing the original Week 8 deployment.
 
-The gRPC configuration in this stage uses plaintext communication.
-TLS and peer authentication are separate security requirements for
-later coursework work.
+## Week 9 — Secure deployment and communication
+
+### Purpose
+
+Week 9 adds a separate secure deployment for the three-node application. It protects public API requests using HTTPS and JWT authentication, and uses mutual TLS (mTLS) for communication between trusted nodes. The original Week 8 deployment remains available.
+
+### Secure deployment and ports
+
+The secure deployment is defined in `compose.secure.yaml`. It runs `node-a`, `node-b` and `node-c` on a private Compose network.
+
+| Service | Internal port | Purpose |
+|---|---:|---|
+| HTTPS API | 8443 | Public API, protected by TLS and JWT |
+| gRPC | 9443 | Remote metadata service, protected by mTLS |
+| Private peer HTTPS | 9444 | Peer announcements and file transfer, protected by mTLS |
+
+The host publishes only the HTTPS API ports: 8441 for node-a, 8442 for node-b and 8443 for node-c. The gRPC and private peer HTTPS ports are not published to the host.
+
+### HTTPS and JWT authentication
+
+The public API uses server certificates signed by the lab certificate authority. Clients verify the server certificate using the CA certificate. Required security mode does not fall back to plaintext HTTP.
+
+`GET /healthz` remains publicly accessible for liveness checks. Other public API routes require a valid bearer JWT. Tokens use HS256 and are checked for issuer, audience, expiry, not-before time, subject and role.
+
+- `reader` permits read-only API requests.
+- `writer` permits write requests, including event publishing.
+- Missing or invalid tokens receive HTTP 401.
+- A valid token without the required role receives HTTP 403.
+
+For example, the health endpoint can be checked using:
+
+    curl --cacert secrets/ca.crt https://localhost:8441/healthz
+
+Protected routes also require an appropriate bearer token. Never include tokens or private keys in evidence or commit them to the repository.
+
+### Mutual TLS between nodes
+
+The gRPC service uses TLS client-certificate verification. The server checks the connecting peer certificate and uses its verified identity when authorising remote file metadata requests. gRPC requests also use the JWT authentication interceptor implemented in this project.
+
+Private peer communication uses HTTPS on port 9444. Peer seeds and advertised peer HTTP addresses use HTTPS URLs on this port, rather than the public API port or the gRPC port.
+
+The private listener provides:
+
+- `/v1/peer/announce` for peer event announcements.
+- `/v1/peer/files` for file-content transfer.
+
+Both endpoints require a trusted client certificate and peer authorisation checks.
+
+The peer file-transfer helper uses mTLS and checks file names, size limits and SHA-256 values. The gRPC `ListFiles` operation continues to return metadata; it does not itself transfer file contents.
+
+### Development credentials and configuration
+
+The `cmd/devcert` helper generates the lab certificate authority and node certificates. The `cmd/devtoken` helper creates short-lived reader or writer tokens for testing.
+
+The CA private key remains on the host and should never be mounted into containers. Node private keys and the JWT signing key are kept in the ignored `secrets` directory and mounted read-only where required.
+
+The secure deployment uses `SECURITY_MODE=required` and the TLS, CA and JWT configuration settings. Development certificates and the shared lab JWT signing key are suitable only for the closed coursework environment. They are not production credentials.
+
+### Verification and limitations
+
+The Go unit, acceptance and race-enabled acceptance test suites passed. Docker Compose configuration validation and image builds completed successfully, and all three secure containers became healthy.
+
+Live checks confirmed that:
+
+- `/healthz` returned HTTP 200.
+- A protected route rejected a missing token with HTTP 401.
+- A reader could access a read route.
+- A reader could not perform a write request and received HTTP 403.
+- A writer request reached the relevant handler.
+- The private peer endpoint rejected a connection without a client certificate.
+- The gRPC metadata endpoint returned the expected remote node identity.
+
+Unit tests cover mTLS file upload and download, including content and checksum validation.
+
+The certificates and shared JWT key are for development only. Peer registrations and message state remain in memory. The file catalogue is rebuilt from files in the configured data directory during startup recovery. The project does not yet provide every planned distributed-system feature, such as durable peer membership and complete automatic peer-to-peer file replication.

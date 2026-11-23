@@ -226,3 +226,96 @@ func TestWeek08_AdvertisedHostnamesMustMatchNodeID(t *testing.T) {
 		})
 	}
 }
+
+func TestWeek09_RequiredSecurityConfiguration(t *testing.T) {
+	valid := Config{
+		ID:                "node-a",
+		HTTP:              "0.0.0.0:8443",
+		GRPC:              "0.0.0.0:9443",
+		HTTPAdvertise:     "https://node-a:8443",
+		GRPCAdvertise:     "node-a:9443",
+		PeerHTTP:          "0.0.0.0:9444",
+		PeerHTTPAdvertise: "https://node-a:9444",
+		TLSCertFile:       "/secrets/node-a.crt",
+		TLSKeyFile:        "/secrets/node-a.key",
+		CAFile:            "/secrets/ca.crt",
+		JWTKeyFile:        "/secrets/jwt.key",
+		JWTIssuer:         "cw2-lab",
+		JWTAudience:       "cw2-nodes",
+		SecurityMode:      "required",
+		PeerSeeds:         []string{"https://node-b:9444"},
+		Timeout:           2 * time.Second,
+	}
+
+	tests := []struct {
+		name    string
+		change  func(*Config)
+		wantErr bool
+	}{
+		{
+			name:    "complete secure configuration",
+			wantErr: false,
+		},
+		{
+			name: "missing TLS certificate",
+			change: func(c *Config) {
+				c.TLSCertFile = ""
+			},
+			wantErr: true,
+		},
+		{
+			name: "public advertised URL must use HTTPS",
+			change: func(c *Config) {
+				c.HTTPAdvertise = "http://node-a:8443"
+			},
+			wantErr: true,
+		},
+		{
+			name: "private peer URL must use HTTPS",
+			change: func(c *Config) {
+				c.PeerHTTPAdvertise = "http://node-a:9444"
+			},
+			wantErr: true,
+		},
+		{
+			name: "private peer hostname must match node ID",
+			change: func(c *Config) {
+				c.PeerHTTPAdvertise = "https://node-b:9444"
+			},
+			wantErr: true,
+		},
+		{
+			name: "secure peer seeds must use HTTPS",
+			change: func(c *Config) {
+				c.PeerSeeds = []string{"node-b:9444"}
+			},
+			wantErr: true,
+		},
+		{
+			name: "unsupported security mode",
+			change: func(c *Config) {
+				c.SecurityMode = "optional"
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := valid
+			config.PeerSeeds = append([]string(nil), valid.PeerSeeds...)
+
+			if tt.change != nil {
+				tt.change(&config)
+			}
+
+			err := config.Validate()
+			if tt.wantErr && err == nil {
+				t.Fatal("expected invalid secure configuration to be rejected")
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("expected valid secure configuration, got: %v", err)
+			}
+		})
+	}
+}

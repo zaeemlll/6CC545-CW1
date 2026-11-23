@@ -16,7 +16,6 @@ const MaxMessage = 4096
 const Version = 1
 const MaxTextBytes = 512
 
-var ErrUnimplemented = errors.New("TODO Week 4: implement IPC")
 
 type Message struct {
 	Version   int    `json:"version"`

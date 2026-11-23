@@ -168,3 +168,48 @@ Both builds used `golang:1.27.3-bookworm`, which resolved to base image digest:
     sha256:dc0963f32053e4bc451d24d87e3892d42d01021b61f093e98eb95c0352bb84b0
 
 This is the resolved base image digest, not a registry digest for the locally built application images. The teaching team's approval of the Go image version remains to be confirmed.
+
+## Week 9 — Secure deployment and communication
+
+### Task 9.1 — HTTPS and JWT authentication
+
+Added a separate secure deployment using `compose.secure.yaml`, keeping the original Week 8 Compose configuration unchanged. The public API uses HTTPS with certificates signed by the lab certificate authority. Added JWT authentication using HS256, with checks for issuer, audience, expiry, not-before time, subject and role.
+
+The `/healthz` endpoint remains publicly accessible. Other public API routes require a valid bearer token. Reader tokens allow read requests, while writer tokens allow write requests. Missing or invalid tokens are rejected with HTTP 401, and requests without the required role are rejected with HTTP 403.
+
+### Task 9.2 — Mutual TLS and peer communication
+
+Added mutual TLS for gRPC and private peer HTTPS communication. The gRPC service verifies client certificates and uses the verified peer identity when authorising remote metadata requests. It also checks JWT authentication.
+
+Added private peer endpoints for event announcements and file transfer. These use HTTPS on port 9444 and require trusted client certificates and peer authorisation. Added a file-transfer helper that checks file names, size limits and SHA-256 values. The gRPC metadata operation remains separate from file-content transfer.
+
+### Task 9.3 — Development credentials and deployment
+
+Added `cmd/devcert` to generate the lab CA and node certificates, and `cmd/devtoken` to create short-lived reader and writer tokens for testing. Kept generated secrets in the ignored `secrets` directory. The CA private key remains on the host and is not mounted into the containers.
+
+The secure Compose deployment runs node-a, node-b and node-c on a private network. It publishes only the public HTTPS ports: 8441, 8442 and 8443. The internal gRPC and private peer HTTPS ports are not published to the host. Required security mode does not fall back to plaintext communication.
+
+### Task 9.4 — Verification results
+
+The following checks completed successfully:
+
+- Full Go unit tests and acceptance tests.
+- Full race-enabled unit tests and race-enabled acceptance tests.
+- `go build ./...`, `go vet ./...` and `go mod verify`.
+- Docker Compose configuration validation and secure image builds.
+- Startup and health checks for all three secure containers.
+- HTTPS health request returned HTTP 200.
+- A protected request without a token returned HTTP 401.
+- A reader token accessed a read route successfully.
+- A reader write request returned HTTP 403.
+- A writer request reached the relevant handler.
+- Remote gRPC metadata retrieval returned the expected node identity.
+- The private peer endpoint rejected a connection without a client certificate.
+- Unit tests verified mTLS file upload and download, including content and checksum validation.
+- `git diff --check` completed without errors.
+
+### Limitations and next steps
+
+The certificates and shared JWT signing key are development credentials for the closed coursework environment, not production credentials. Peer registrations and message state remain in memory. The file catalogue is rebuilt from files in the configured data directory during startup recovery. Although the mTLS file-transfer helper is tested, complete automatic peer-to-peer file replication is not yet implemented. Durable peer membership is also still outstanding.
+
+I used the supplied Week 9 integration guide and coursework materials. ChatGPT assisted with explanations, troubleshooting, code review and documentation. I ran the commands and checked the reported results.

@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"net/http"
+	"strings"
 	"time"
 
 	"example.edu/6cc545/cw1/internal/config"
@@ -12,7 +13,7 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-func RemoteFiles(reg *state.Registry, nodeID string, timeout time.Duration) http.HandlerFunc {
+func RemoteFiles(reg *state.Registry, nodeID string, timeout time.Duration, c config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			w.Header().Set("Allow", "GET")
@@ -32,7 +33,18 @@ func RemoteFiles(reg *state.Registry, nodeID string, timeout time.Duration) http
 			return
 		}
 
-		result, err := rpcfiles.Fetch(r.Context(), peer.GRPCAddress, nodeID, timeout)
+		authorization := r.Header.Get("Authorization")
+		token := strings.TrimPrefix(authorization, "Bearer ")
+
+		result, err := rpcfiles.FetchWithToken(
+			r.Context(),
+			peer.GRPCAddress,
+			peer.ID,
+			nodeID,
+			timeout,
+			token,
+			c,
+		)
 		if err != nil {
 			switch status.Code(err) {
 			case codes.InvalidArgument:

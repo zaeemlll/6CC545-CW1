@@ -38,12 +38,21 @@ func TestPeerValidation(t *testing.T) {
 		}
 	}
 
+	securePeer := good
+	securePeer.HTTPAddress = "https://node-b:9444"
+	if err := securePeer.Validate(); err != nil {
+		t.Errorf("valid HTTPS peer address rejected: %v", err)
+	}
+
 	cases := []struct {
 		name string
 		peer Peer
 	}{
 		{"empty ID", func() Peer { p := good; p.ID = ""; return p }()},
 		{"invalid HTTP address", func() Peer { p := good; p.HTTPAddress = "broken"; return p }()},
+		{"insecure HTTP URL", func() Peer { p := good; p.HTTPAddress = "http://node-b:9444"; return p }()},
+		{"HTTPS URL missing port", func() Peer { p := good; p.HTTPAddress = "https://node-b"; return p }()},
+		{"HTTPS URL with path", func() Peer { p := good; p.HTTPAddress = "https://node-b:9444/files"; return p }()},
 		{"invalid gRPC address", func() Peer { p := good; p.GRPCAddress = "broken"; return p }()},
 		{"invalid status", func() Peer { p := good; p.Status = "sleeping"; return p }()},
 	}

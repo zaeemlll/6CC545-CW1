@@ -7,7 +7,7 @@
 - A terminal with a POSIX-compatible shell.
 - Docker Engine and Docker Compose v2 for the container deployment.
 
-The Go application was developed and tested locally on macOS using Go 1.27.1. Generated Protocol Buffers and gRPC files are included in the source. Docker deployment was tested on macOS 14.5 (Intel x86_64) using Docker Desktop 4.99.0, Docker Engine 29.9.3 and Docker Compose v5.7.0. Confirm the Go image version against the staff-approved environment before final submission.
+The Go module declares Go 1.23.0. The application was developed and tested locally on macOS using Go 1.27.1 (darwin/amd64). Generated Protocol Buffers and gRPC files are included in the source. Docker deployment was tested on macOS 14.5 (Intel x86_64) using Docker Desktop 4.99.0, Docker Engine 29.9.3 and Docker Compose v5.7.0. Confirm the Go image version against the staff-approved environment before final submission.
 
 Clone the repository:
 
@@ -25,6 +25,8 @@ cd source
 go build ./...
 go test ./... -count=1 -timeout 30s
 go test -race ./... -count=1 -timeout 30s
+go test -tags=acceptance ./... -count=1
+go test -race -tags=acceptance ./... -count=1
 go vet ./...
 go mod verify
 ```
@@ -183,8 +185,46 @@ Peer registrations and message state are held in memory and are not preserved ac
 
 ## Known limitations
 
-- The local two-node scripts use loopback addresses. The Docker configuration uses the private Compose network for container communication.
-- TLS and application-level authentication are not implemented.
+- The original Week 8 local scripts and `compose.yaml` remain available as a non-secure development deployment. Use `compose.secure.yaml` for the Week 9 TLS and JWT deployment.
+- The secure deployment uses development certificates and a shared lab JWT signing key. These are intended for the closed lab environment, not production use.
 - Peer registrations and message state are held in memory. The file catalogue is rebuilt from committed files in the configured data directory during startup recovery.
-- Remote file operations exchange metadata, not actual file contents.
-- The prototype does not implement the full security and peer-to-peer features planned for CW2.
+- The remote gRPC API retrieves file metadata. A separate mTLS-protected peer file-transfer helper supports file-content transfer and is covered by unit tests.
+- The project does not yet implement all planned CW2 features, including durable peer membership and the complete peer-to-peer behaviour intended for later weeks.
+
+## Week 9 secure deployment
+
+Week 9 adds a separate secure three-node deployment. The original `compose.yaml` and Week 8 scripts remain available.
+
+### Generate development credentials
+
+From the repository root, run `cd source` followed by `go run ./cmd/devcert -out ../secrets`, then return with `cd ..`.
+
+This creates development certificates for node-a, node-b and node-c, together with a JWT signing key. Keep the `secrets/` directory private. Never commit it or include private keys or tokens in submission evidence.
+
+### Start the secure deployment
+
+Run these commands from the repository root:
+
+```bash
+docker compose -f compose.secure.yaml config --quiet
+docker compose -f compose.secure.yaml up --build -d
+docker compose -f compose.secure.yaml ps
+```
+
+The public HTTPS ports are 8441, 8442 and 8443 for node-a, node-b and node-c respectively. The gRPC port (9443) and private peer HTTPS port (9444) are not published to the host. Nodes communicate over a private Compose network.
+
+### Check HTTPS health
+
+```bash
+curl --cacert secrets/ca.crt https://localhost:8441/healthz
+```
+
+The health endpoint is public. Other protected API routes require a JWT. Read routes require a reader token; write routes require a writer token.
+
+### Stop the secure deployment
+
+```bash
+docker compose -f compose.secure.yaml down
+```
+
+This preserves named data volumes. Use `down -v` only when you intend to delete their data as well.
