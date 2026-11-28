@@ -19,18 +19,26 @@ import (
 var ErrInvalidName = errors.New("invalid portable file name")
 var ErrIntegrity = errors.New("size or SHA-256 mismatch")
 var ErrTooLarge = errors.New("file exceeds configured limit")
+var ErrVersionedWriteRequired = errors.New("versioned storage requires a versioned write")
 
 type Metadata struct {
 	Name         string `json:"name"`
 	Size         int64  `json:"size"`
 	SHA256       string `json:"sha256"`
 	ModifiedUnix int64  `json:"modified_unix"`
+	Version      uint64 `json:"version"`
+	WriterID     string `json:"writer_id"`
 }
 type Store struct {
-	mu       sync.RWMutex
-	root     string
-	maxBytes int64
-	files    map[string]Metadata
+	mu               sync.RWMutex
+	root             string
+	maxBytes         int64
+	files            map[string]Metadata
+	versioned        bool
+	nodeID           string
+	versionStateDir  string
+	versionClock     uint64
+	recoveryRequired bool
 }
 
 // New creates a store using the supplied directory and file-size limit.
@@ -210,6 +218,9 @@ func (s *Store) Put(ctx context.Context, name string, r io.Reader, size int64, s
 	if err := ctx.Err(); err != nil {
 		return Metadata{}, err
 	}
+	if s.versioned {
+		return Metadata{}, ErrVersionedWriteRequired
+	}
 
 	destination := filepath.Join(s.root, name)
 	if err := os.Rename(tempName, destination); err != nil {
@@ -233,6 +244,10 @@ func (s *Store) Open(name string) (io.ReadCloser, Metadata, error) {
 
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+
+	if s.versioned && s.recoveryRequired {
+		return nil, Metadata{}, errors.New("versioned storage requires recovery")
+	}
 
 	metadata, ok := s.files[name]
 	if !ok {
@@ -263,6 +278,10 @@ func (s *Store) Snapshot() ([]Metadata, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
+	if s.versioned && s.recoveryRequired {
+		return nil, errors.New("versioned storage requires recovery")
+	}
+
 	result := make([]Metadata, 0, len(s.files))
 	for _, metadata := range s.files {
 		result = append(result, metadata)
@@ -290,6 +309,10 @@ func (s *Store) Recover(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if s.versioned {
+		return s.recoverVersionedLocked(ctx)
+	}
+
 	entries, err := os.ReadDir(s.root)
 	if err != nil {
 		return err
@@ -313,6 +336,15 @@ func (s *Store) Recover(ctx context.Context) error {
 		// Never follow or accept symbolic links in the storage root.
 		if info.Mode()&os.ModeSymlink != 0 {
 			return errors.New("storage contains a symbolic link")
+		}
+
+		// The reserved CW2 state directory is separate from shared files.
+		// Its contents are validated by the membership persistence layer.
+		if name == ".cw2-state" {
+			if !info.IsDir() {
+				return errors.New("CW2 state entry is not a directory")
+			}
+			continue
 		}
 
 		// Abandoned temporary files are not committed files.

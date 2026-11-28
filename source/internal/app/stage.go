@@ -24,6 +24,7 @@ import (
 	"example.edu/6cc545/cw1/internal/events"
 	"example.edu/6cc545/cw1/internal/httpapi"
 	"example.edu/6cc545/cw1/internal/ipc"
+	"example.edu/6cc545/cw1/internal/membership"
 	"example.edu/6cc545/cw1/internal/model"
 	"example.edu/6cc545/cw1/internal/state"
 	"example.edu/6cc545/cw1/internal/storage"
@@ -200,6 +201,22 @@ func Wire(ctx context.Context, c config.Config, mux *http.ServeMux) (func(), err
 		return nil, fmt.Errorf("create file storage: %w", err)
 	}
 
+	// Enable durable file versioning for secure CW2 nodes before recovery.
+	if c.SecurityMode == "required" {
+		if err := store.EnableVersioning(c.ID); err != nil {
+			if tcpListener != nil {
+				_ = tcpListener.Close()
+			}
+			if udpConn != nil {
+				_ = udpConn.Close()
+			}
+			if grpcListener != nil {
+				_ = grpcListener.Close()
+			}
+			return nil, fmt.Errorf("enable versioned file storage: %w", err)
+		}
+	}
+
 	// Restore committed files before the application starts serving requests.
 	if err := store.Recover(ctx); err != nil {
 		if tcpListener != nil {
@@ -212,6 +229,27 @@ func Wire(ctx context.Context, c config.Config, mux *http.ServeMux) (func(), err
 			_ = grpcListener.Close()
 		}
 		return nil, fmt.Errorf("recover file storage: %w", err)
+	}
+
+	var membershipTable *membership.Table
+	if c.SecurityMode == "required" {
+		membershipTable, err = membership.NewPersistent(
+			128,
+			4*time.Second,
+			filepath.Join(dataDir, ".cw2-state", "membership.json"),
+		)
+		if err != nil {
+			if tcpListener != nil {
+				_ = tcpListener.Close()
+			}
+			if udpConn != nil {
+				_ = udpConn.Close()
+			}
+			if grpcListener != nil {
+				_ = grpcListener.Close()
+			}
+			return nil, fmt.Errorf("restore persistent peer membership: %w", err)
+		}
 	}
 
 	storageCatalog, err := rpcfiles.NewStorageCatalog(store)
@@ -352,6 +390,7 @@ func Wire(ctx context.Context, c config.Config, mux *http.ServeMux) (func(), err
 
 		peerMux := http.NewServeMux()
 		peerMux.HandleFunc("/v1/peer/announce", httpapi.PeerAnnounce(eventBus, registry))
+		peerMux.HandleFunc("/v1/peer/membership", httpapi.PeerMembership(membershipTable, registry))
 		peerMux.HandleFunc("/v1/peer/files/", httpapi.PeerFiles(store, registry, maxStoredFileBytes))
 
 		peerHTTPServer = &http.Server{
@@ -365,6 +404,62 @@ func Wire(ctx context.Context, c config.Config, mux *http.ServeMux) (func(), err
 
 	var wg sync.WaitGroup
 	var stopOnce sync.Once
+
+	// Expire inactive authenticated peers and update their registry status.
+	if membershipTable != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			ticker := time.NewTicker(time.Second)
+			defer ticker.Stop()
+
+			for {
+				select {
+				case <-runCtx.Done():
+					return
+				case now := <-ticker.C:
+					for _, peerID := range membershipTable.Expire(now) {
+						if err := registry.SetStatus(peerID, "offline"); err != nil {
+							log.Printf("membership expiry status update failed for peer %s: %v", peerID, err)
+						}
+					}
+				}
+			}
+		}()
+	}
+
+	// Announce this node's membership to its enrolled peers.
+	if membershipTable != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			runMembershipAnnouncements(
+				runCtx,
+				registry,
+				c.ID,
+				c.PeerHTTPAdvertise,
+				membershipTable,
+				c,
+			)
+		}()
+	}
+
+	// Reconcile authenticated peers using bounded, cancellable pull-based sync.
+	if membershipTable != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			runReconciliation(
+				runCtx,
+				c,
+				store,
+				registry,
+				membershipTable,
+				grpcJWTValidator,
+			)
+		}()
+	}
 
 	// Both subscribers have their own queue and receive each matching event.
 	wg.Add(2)

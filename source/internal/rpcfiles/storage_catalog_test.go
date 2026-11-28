@@ -69,3 +69,27 @@ func TestStorageCatalogReturnsCommittedMetadata(t *testing.T) {
 			first[0].ModifiedUnix, second[0].ModifiedUnix)
 	}
 }
+
+func TestStorageCatalogPropagatesRecoveryError(t *testing.T) {
+	store, err := storage.New(t.TempDir(), 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := store.EnableVersioning("node-a"); err != nil {
+		t.Fatal(err)
+	}
+
+	catalog, err := NewStorageCatalog(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	files, err := catalog.SnapshotWithError()
+	if err == nil {
+		t.Fatal("expected a storage recovery error")
+	}
+	if files != nil {
+		t.Fatalf("expected no files on error, got %+v", files)
+	}
+}

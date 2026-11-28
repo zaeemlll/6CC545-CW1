@@ -85,7 +85,12 @@ func (h *storedFileHandler) upload(w http.ResponseWriter, r *http.Request, name 
 	sha := r.Header.Get("X-File-SHA256")
 	body := http.MaxBytesReader(w, r.Body, h.maxBytes+1)
 
-	metadata, err := h.store.Put(r.Context(), name, body, size, sha)
+	var metadata storage.Metadata
+	if h.store.VersioningEnabled() {
+		metadata, err = h.store.PutLocalVersioned(r.Context(), name, body, size, sha)
+	} else {
+		metadata, err = h.store.Put(r.Context(), name, body, size, sha)
+	}
 	if err != nil {
 		var maxErr *http.MaxBytesError
 

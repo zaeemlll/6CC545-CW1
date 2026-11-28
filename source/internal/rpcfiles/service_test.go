@@ -2,6 +2,7 @@ package rpcfiles
 
 import (
 	"context"
+	"errors"
 	pb "example.edu/6cc545/cw1/api/files/v1"
 	"example.edu/6cc545/cw1/internal/config"
 	"example.edu/6cc545/cw1/internal/model"
@@ -128,6 +129,32 @@ func TestWeek09_ServiceRequiresVerifiedPeerIdentity(t *testing.T) {
 	)
 	if status.Code(err) != codes.Unauthenticated {
 		t.Fatalf("status = %v, want Unauthenticated; error: %v",
+			status.Code(err), err)
+	}
+}
+
+type failingSnapshotCatalog struct{}
+
+func (failingSnapshotCatalog) Snapshot() []model.FileMetadata {
+	return nil
+}
+
+func (failingSnapshotCatalog) SnapshotWithError() ([]model.FileMetadata, error) {
+	return nil, errors.New("simulated storage recovery failure")
+}
+
+func TestServiceReturnsUnavailableWhenStorageSnapshotFails(t *testing.T) {
+	svc := &Service{
+		NodeID:  "node-b",
+		Catalog: failingSnapshotCatalog{},
+	}
+
+	_, err := svc.ListFiles(
+		context.Background(),
+		&pb.ListFilesRequest{RequesterId: "node-a"},
+	)
+	if status.Code(err) != codes.Unavailable {
+		t.Fatalf("status = %v, want Unavailable; error: %v",
 			status.Code(err), err)
 	}
 }

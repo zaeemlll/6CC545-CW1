@@ -83,6 +83,10 @@ func PeerFiles(store *storage.Store, registry *state.Registry, maxBytes int64) h
 			w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", name))
 			w.Header().Set("X-File-Size", strconv.FormatInt(metadata.Size, 10))
 			w.Header().Set("X-File-SHA256", metadata.SHA256)
+			if store.VersioningEnabled() {
+				w.Header().Set("X-File-Version", strconv.FormatUint(metadata.Version, 10))
+				w.Header().Set("X-File-Writer-ID", metadata.WriterID)
+			}
 			w.Header().Set("X-Content-Type-Options", "nosniff")
 			w.WriteHeader(http.StatusOK)
 
@@ -106,13 +110,23 @@ func PeerFiles(store *storage.Store, registry *state.Registry, maxBytes int64) h
 			}
 
 			body := http.MaxBytesReader(w, r.Body, maxBytes+1)
-			metadata, err := store.Put(
-				r.Context(),
-				name,
-				body,
-				size,
-				r.Header.Get("X-File-SHA256"),
-			)
+			var metadata storage.Metadata
+			if store.VersioningEnabled() {
+				version, parseErr := strconv.ParseUint(r.Header.Get("X-File-Version"), 10, 64)
+				writerID := r.Header.Get("X-File-Writer-ID")
+				if parseErr != nil || version == 0 || !config.ValidID(writerID) {
+					ErrorJSON(w, http.StatusBadRequest, "invalid_file_version")
+					return
+				}
+				metadata, err = store.PutVersioned(r.Context(), name, body, storage.Metadata{
+					Name: name, Size: size, SHA256: r.Header.Get("X-File-SHA256"),
+					Version: version, WriterID: writerID,
+				})
+			} else {
+				metadata, err = store.Put(
+					r.Context(), name, body, size, r.Header.Get("X-File-SHA256"),
+				)
+			}
 			if err != nil {
 				var maxErr *http.MaxBytesError
 				switch {
@@ -122,6 +136,12 @@ func PeerFiles(store *storage.Store, registry *state.Registry, maxBytes int64) h
 					ErrorJSON(w, http.StatusBadRequest, "invalid_file_name")
 				case errors.Is(err, storage.ErrIntegrity):
 					ErrorJSON(w, http.StatusUnprocessableEntity, "file_integrity_failed")
+				case errors.Is(err, storage.ErrVersionConflict):
+					ErrorJSON(w, http.StatusConflict, "version_conflict")
+				case errors.Is(err, storage.ErrVersionEquivocation):
+					ErrorJSON(w, http.StatusConflict, "version_equivocation")
+				case errors.Is(err, storage.ErrInvalidVersionMetadata):
+					ErrorJSON(w, http.StatusBadRequest, "invalid_file_version")
 				default:
 					log.Printf("peer file upload failed peer=%s name=%s: %v", peerID, name, err)
 					ErrorJSON(w, http.StatusInternalServerError, "storage_failed")

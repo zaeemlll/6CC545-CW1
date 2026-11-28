@@ -351,3 +351,67 @@ func TestWeek09_PeerFromSeed(t *testing.T) {
 		})
 	}
 }
+
+func TestWeek10_RunShutsDownAfterRuntimeCancellation(t *testing.T) {
+	useTemporaryWorkingDirectory(t)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	address := ln.Addr().String()
+	if err := ln.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() {
+		done <- Run(ctx, config.Config{
+			ID:      "node-test",
+			HTTP:    address,
+			Timeout: time.Second,
+		})
+	}()
+
+	client := http.Client{Timeout: 200 * time.Millisecond}
+	url := "http://" + address + "/healthz"
+	startupDeadline := time.Now().Add(3 * time.Second)
+
+	for {
+		response, requestErr := client.Get(url)
+		if requestErr == nil {
+			_ = response.Body.Close()
+			if response.StatusCode != http.StatusOK {
+				cancel()
+				t.Fatalf("health check returned status %d", response.StatusCode)
+			}
+			break
+		}
+
+		select {
+		case runErr := <-done:
+			t.Fatalf("application stopped before becoming ready: %v", runErr)
+		default:
+		}
+
+		if time.Now().After(startupDeadline) {
+			cancel()
+			t.Fatalf("application did not become ready: %v", requestErr)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	cancel()
+
+	select {
+	case runErr := <-done:
+		if runErr != nil {
+			t.Fatalf("application shutdown returned an error: %v", runErr)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("application did not shut down after cancellation")
+	}
+}

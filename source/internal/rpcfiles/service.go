@@ -6,6 +6,7 @@ import (
 	pb "example.edu/6cc545/cw1/api/files/v1"
 	"example.edu/6cc545/cw1/internal/config"
 	"example.edu/6cc545/cw1/internal/model"
+	"example.edu/6cc545/cw1/internal/security"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/peer"
@@ -53,13 +54,32 @@ func (s *Service) ListFiles(ctx context.Context, r *pb.ListFilesRequest) (*pb.Li
 		if len(leaf.URIs) != 1 || leaf.URIs[0].String() != expectedURI {
 			return nil, status.Error(codes.PermissionDenied, "requester identity does not match client certificate")
 		}
+		claims, ok := security.ClaimsFromContext(ctx)
+		if !ok {
+			return nil, status.Error(codes.Unauthenticated, "verified JWT identity required")
+		}
+		if claims.Subject != r.GetRequesterId() {
+			return nil, status.Error(codes.PermissionDenied, "JWT subject does not match requester identity")
+		}
 	}
 
 	if s.Catalog == nil {
 		return nil, status.Error(codes.Internal, "catalogue unavailable")
 	}
 
-	snapshot := s.Catalog.Snapshot()
+	var snapshot []model.FileMetadata
+	if errorCatalog, ok := s.Catalog.(interface {
+		SnapshotWithError() ([]model.FileMetadata, error)
+	}); ok {
+		var err error
+		snapshot, err = errorCatalog.SnapshotWithError()
+		if err != nil {
+			return nil, status.Error(codes.Unavailable, "catalogue temporarily unavailable")
+		}
+	} else {
+		snapshot = s.Catalog.Snapshot()
+	}
+
 	files := make([]*pb.FileMetadata, 0, len(snapshot))
 
 	for _, f := range snapshot {
@@ -68,6 +88,8 @@ func (s *Service) ListFiles(ctx context.Context, r *pb.ListFilesRequest) (*pb.Li
 			Size:         f.Size,
 			Sha256:       f.SHA256,
 			ModifiedUnix: f.ModifiedUnix,
+			Version:      f.Version,
+			WriterId:     f.WriterID,
 		})
 	}
 

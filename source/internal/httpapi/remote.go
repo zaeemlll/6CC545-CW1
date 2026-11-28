@@ -71,6 +71,8 @@ func RemoteFiles(reg *state.Registry, nodeID string, timeout time.Duration, c co
 				Size:         f.GetSize(),
 				SHA256:       f.GetSha256(),
 				ModifiedUnix: f.GetModifiedUnix(),
+				Version:      f.GetVersion(),
+				WriterID:     f.GetWriterId(),
 			})
 		}
 

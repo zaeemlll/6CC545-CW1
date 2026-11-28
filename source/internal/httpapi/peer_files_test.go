@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
@@ -133,5 +134,70 @@ func TestPeerFilesRegisteredPeerUploadAndDownload(t *testing.T) {
 	}
 	if downloadResponse.Header().Get("X-File-SHA256") != digest {
 		t.Fatal("download response has incorrect SHA-256 header")
+	}
+}
+
+func TestPeerFilesPreservesVersionedMetadata(t *testing.T) {
+	store, _, handler := peerFileTestHandler(t)
+
+	if err := store.EnableVersioning("node-c"); err != nil {
+		t.Fatalf("enable versioning: %v", err)
+	}
+	if err := store.Recover(context.Background()); err != nil {
+		t.Fatalf("recover versioned store: %v", err)
+	}
+
+	content := []byte("remote versioned file")
+	sum := sha256.Sum256(content)
+	digest := hex.EncodeToString(sum[:])
+
+	upload := httptest.NewRequest(
+		http.MethodPost, "/v1/peer/files/report.txt", bytes.NewReader(content),
+	)
+	upload.Header.Set("X-File-Size", "21")
+	upload.Header.Set("X-File-SHA256", digest)
+	upload.Header.Set("X-File-Version", "7")
+	upload.Header.Set("X-File-Writer-ID", "node-a")
+	upload.TLS = &tls.ConnectionState{
+		VerifiedChains: [][]*x509.Certificate{{
+			peerFileTestCertificate(t, "node-b"),
+		}},
+	}
+
+	uploadResponse := httptest.NewRecorder()
+	handler.ServeHTTP(uploadResponse, upload)
+
+	if uploadResponse.Code != http.StatusCreated {
+		t.Fatalf("upload status = %d, want %d; body: %s",
+			uploadResponse.Code, http.StatusCreated, uploadResponse.Body.String())
+	}
+
+	download := httptest.NewRequest(
+		http.MethodGet, "/v1/peer/files/report.txt", nil,
+	)
+	download.TLS = &tls.ConnectionState{
+		VerifiedChains: [][]*x509.Certificate{{
+			peerFileTestCertificate(t, "node-b"),
+		}},
+	}
+
+	downloadResponse := httptest.NewRecorder()
+	handler.ServeHTTP(downloadResponse, download)
+
+	if downloadResponse.Code != http.StatusOK {
+		t.Fatalf("download status = %d, want %d; body: %s",
+			downloadResponse.Code, http.StatusOK, downloadResponse.Body.String())
+	}
+	if downloadResponse.Header().Get("X-File-Version") != "7" {
+		t.Fatalf("version header = %q, want 7",
+			downloadResponse.Header().Get("X-File-Version"))
+	}
+	if downloadResponse.Header().Get("X-File-Writer-ID") != "node-a" {
+		t.Fatalf("writer header = %q, want node-a",
+			downloadResponse.Header().Get("X-File-Writer-ID"))
+	}
+	if !bytes.Equal(downloadResponse.Body.Bytes(), content) {
+		t.Fatalf("downloaded content = %q, want %q",
+			downloadResponse.Body.Bytes(), content)
 	}
 }

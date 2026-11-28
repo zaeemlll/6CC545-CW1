@@ -109,3 +109,41 @@ func TestRecoverHonoursCancelledContext(t *testing.T) {
 		t.Fatalf("cancelled recovery changed the catalogue: %+v", files)
 	}
 }
+
+func TestRecoverPreservesCW2StateDirectory(t *testing.T) {
+	dir := t.TempDir()
+	stateDir := filepath.Join(dir, ".cw2-state")
+	if err := os.Mkdir(stateDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+
+	statePath := filepath.Join(stateDir, "membership.json")
+	state := []byte(`{"node-b":[2,5]}`)
+	if err := os.WriteFile(statePath, state, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := New(dir, 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Recover(context.Background()); err != nil {
+		t.Fatalf("recovery rejected reserved state directory: %v", err)
+	}
+
+	got, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, state) {
+		t.Fatal("recovery changed membership state")
+	}
+
+	files, err := store.Snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 0 {
+		t.Fatalf("membership state appeared in shared-file catalogue: %+v", files)
+	}
+}

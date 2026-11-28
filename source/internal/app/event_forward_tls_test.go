@@ -23,6 +23,7 @@ import (
 
 	"example.edu/6cc545/cw1/internal/config"
 	"example.edu/6cc545/cw1/internal/events"
+	"example.edu/6cc545/cw1/internal/membership"
 	"example.edu/6cc545/cw1/internal/model"
 	"example.edu/6cc545/cw1/internal/security"
 	"example.edu/6cc545/cw1/internal/state"
@@ -166,5 +167,72 @@ func TestForwardEventToPeersUsesMutualTLS(t *testing.T) {
 
 	if received != event {
 		t.Fatalf("received event = %+v, want %+v", received, event)
+	}
+}
+
+func TestForwardMembershipToPeersUsesMutualTLS(t *testing.T) {
+	cert, key, ca := writeForwardingTLSFixtures(t)
+
+	serverTLS, err := security.ServerTLS(cert, key, ca, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expected := membership.Announcement{
+		ID:          "node-a",
+		Address:     "https://node-a:9444",
+		Incarnation: 3,
+		Sequence:    7,
+	}
+
+	var received membership.Announcement
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/peer/membership" {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		if r.TLS == nil || len(r.TLS.VerifiedChains) == 0 {
+			t.Error("request did not present a verified client certificate")
+		}
+		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+			t.Errorf("decode announcement: %v", err)
+		}
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	server.TLS = serverTLS
+	server.StartTLS()
+	defer server.Close()
+
+	address := server.Listener.Addr().(*net.TCPAddr)
+	peerURL := "https://localhost:" + strconv.Itoa(address.Port)
+
+	registry := state.NewRegistry()
+	if err := registry.Add(model.Peer{
+		ID:          "node-b",
+		HTTPAddress: peerURL,
+		GRPCAddress: "node-b:9443",
+		Status:      "online",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	err = forwardMembershipToPeers(
+		context.Background(),
+		registry,
+		"node-a",
+		expected,
+		config.Config{
+			SecurityMode: "required",
+			TLSCertFile:  cert,
+			TLSKeyFile:   key,
+			CAFile:       ca,
+			Timeout:      2 * time.Second,
+		},
+	)
+	if err != nil {
+		t.Fatalf("secure membership forwarding failed: %v", err)
+	}
+
+	if received != expected {
+		t.Fatalf("received announcement = %+v, want %+v", received, expected)
 	}
 }

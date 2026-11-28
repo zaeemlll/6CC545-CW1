@@ -9,6 +9,8 @@ message FileMetadata {
   int64 size = 2;
   string sha256 = 3;
   int64 modified_unix = 4;
+  uint64 version = 5;
+  string writer_id = 6;
 }
 message ListFilesResponse {
   repeated FileMetadata files = 1;

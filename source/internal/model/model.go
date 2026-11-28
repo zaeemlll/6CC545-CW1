@@ -14,10 +14,12 @@ type Peer struct {
 	Status      string `json:"status"`
 }
 type FileMetadata struct {
-	Name         string `json:"name"`
-	Size         int64  `json:"size"`
-	SHA256       string `json:"sha256"`
-	ModifiedUnix int64  `json:"modified_unix"`
+    Name         string `json:"name"`
+    Size         int64  `json:"size"`
+    SHA256       string `json:"sha256"`
+    ModifiedUnix int64  `json:"modified_unix"`
+    Version      uint64 `json:"version"`
+    WriterID     string `json:"writer_id"`
 }
 
 func (p Peer) Validate() error {

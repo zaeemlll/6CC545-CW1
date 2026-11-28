@@ -72,6 +72,8 @@ type FileMetadata struct {
 	Size          int64                  `protobuf:"varint,2,opt,name=size,proto3" json:"size,omitempty"`
 	Sha256        string                 `protobuf:"bytes,3,opt,name=sha256,proto3" json:"sha256,omitempty"`
 	ModifiedUnix  int64                  `protobuf:"varint,4,opt,name=modified_unix,json=modifiedUnix,proto3" json:"modified_unix,omitempty"`
+	Version       uint64                 `protobuf:"varint,5,opt,name=version,proto3" json:"version,omitempty"`
+	WriterId      string                 `protobuf:"bytes,6,opt,name=writer_id,json=writerId,proto3" json:"writer_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -134,6 +136,20 @@ func (x *FileMetadata) GetModifiedUnix() int64 {
 	return 0
 }
 
+func (x *FileMetadata) GetVersion() uint64 {
+	if x != nil {
+		return x.Version
+	}
+	return 0
+}
+
+func (x *FileMetadata) GetWriterId() string {
+	if x != nil {
+		return x.WriterId
+	}
+	return ""
+}
+
 type ListFilesResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Files         []*FileMetadata        `protobuf:"bytes,1,rep,name=files,proto3" json:"files,omitempty"`
@@ -192,12 +208,14 @@ const file_files_proto_rawDesc = "" +
 	"\n" +
 	"\vfiles.proto\x12\fcw1.files.v1\"5\n" +
 	"\x10ListFilesRequest\x12!\n" +
-	"\frequester_id\x18\x01 \x01(\tR\vrequesterId\"s\n" +
+	"\frequester_id\x18\x01 \x01(\tR\vrequesterId\"\xaa\x01\n" +
 	"\fFileMetadata\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x12\n" +
 	"\x04size\x18\x02 \x01(\x03R\x04size\x12\x16\n" +
 	"\x06sha256\x18\x03 \x01(\tR\x06sha256\x12#\n" +
-	"\rmodified_unix\x18\x04 \x01(\x03R\fmodifiedUnix\"^\n" +
+	"\rmodified_unix\x18\x04 \x01(\x03R\fmodifiedUnix\x12\x18\n" +
+	"\aversion\x18\x05 \x01(\x04R\aversion\x12\x1b\n" +
+	"\twriter_id\x18\x06 \x01(\tR\bwriterId\"^\n" +
 	"\x11ListFilesResponse\x120\n" +
 	"\x05files\x18\x01 \x03(\v2\x1a.cw1.files.v1.FileMetadataR\x05files\x12\x17\n" +
 	"\anode_id\x18\x02 \x01(\tR\x06nodeId2[\n" +

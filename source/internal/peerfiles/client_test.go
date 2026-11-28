@@ -219,3 +219,128 @@ func TestPeerFileTransferRejectsInsecureConfigurationAndInvalidNames(t *testing.
 		t.Fatal("accepted an invalid file name")
 	}
 }
+
+func TestVersionedPeerFileUploadAndDownloadPreserveMetadata(t *testing.T) {
+	cfg, serverCert, serverKey, _, caPath := peerTransferTLSConfig(t)
+
+	serverStore, err := storage.New(t.TempDir(), 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientStore, err := storage.New(t.TempDir(), 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	downloadStore, err := storage.New(t.TempDir(), 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for store, nodeID := range map[*storage.Store]string{
+		serverStore:   "node-b",
+		clientStore:   "node-a",
+		downloadStore: "node-c",
+	} {
+		if err := store.EnableVersioning(nodeID); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.Recover(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	content := []byte("versioned secure peer transfer")
+	sum := sha256.Sum256(content)
+	digest := hex.EncodeToString(sum[:])
+
+	original, err := clientStore.PutLocalVersioned(
+		context.Background(),
+		"report.txt",
+		bytes.NewReader(content),
+		int64(len(content)),
+		digest,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	registry := state.NewRegistry()
+	if err := registry.Add(model.Peer{
+		ID:          "node-a",
+		HTTPAddress: "127.0.0.1:8081",
+		GRPCAddress: "127.0.0.1:9091",
+		Status:      "online",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	serverTLS, err := security.ServerTLS(serverCert, serverKey, caPath, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewUnstartedServer(httpapi.PeerFiles(serverStore, registry, 1024))
+	server.TLS = serverTLS
+	server.StartTLS()
+	defer server.Close()
+
+	address := server.Listener.Addr().(*net.TCPAddr)
+	peerURL := "https://localhost:" + strconv.Itoa(address.Port)
+
+	uploaded, err := Upload(
+		context.Background(), peerURL, "localhost", "report.txt",
+		clientStore, 3*time.Second, cfg,
+	)
+	if err != nil {
+		t.Fatalf("versioned upload failed: %v", err)
+	}
+	if uploaded.Version != original.Version || uploaded.WriterID != original.WriterID {
+		t.Fatalf("uploaded metadata = %+v, want version %d and writer %q",
+			uploaded, original.Version, original.WriterID)
+	}
+
+	downloaded, err := Download(
+		context.Background(), peerURL, "localhost", "report.txt",
+		downloadStore, 3*time.Second, cfg,
+	)
+	if err != nil {
+		t.Fatalf("versioned download failed: %v", err)
+	}
+	if downloaded.Version != original.Version || downloaded.WriterID != original.WriterID {
+		t.Fatalf("downloaded metadata = %+v, want version %d and writer %q",
+			downloaded, original.Version, original.WriterID)
+	}
+	if downloaded.SHA256 != digest || downloaded.Size != int64(len(content)) {
+		t.Fatalf("downloaded content metadata = %+v", downloaded)
+	}
+
+	expected := original
+	verified, err := DownloadExpected(
+		context.Background(), peerURL, "localhost", "report.txt",
+		downloadStore, 3*time.Second, cfg, expected,
+	)
+	if err != nil {
+		t.Fatalf("download with matching advertised metadata failed: %v", err)
+	}
+	if verified.Version != expected.Version || verified.WriterID != expected.WriterID {
+		t.Fatalf("verified metadata = %+v, want %+v", verified, expected)
+	}
+
+	mismatched := expected
+	mismatched.Version++
+	if _, err := DownloadExpected(
+		context.Background(), peerURL, "localhost", "report.txt",
+		downloadStore, 3*time.Second, cfg, mismatched,
+	); err == nil {
+		t.Fatal("download with mismatched advertised version succeeded")
+	}
+
+	_, storedAfterMismatch, err := downloadStore.Open("report.txt")
+	if err != nil {
+		t.Fatalf("open file after rejected download: %v", err)
+	}
+	if storedAfterMismatch.Version != expected.Version ||
+		storedAfterMismatch.WriterID != expected.WriterID ||
+		storedAfterMismatch.SHA256 != expected.SHA256 {
+		t.Fatalf("rejected download changed stored metadata: %+v", storedAfterMismatch)
+	}
+}

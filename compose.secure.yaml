@@ -60,10 +60,10 @@ services:
       - "127.0.0.1:8441:8443"
     volumes:
       - data-a:/data
-      - ./secrets/ca.crt:/run/secrets/ca.crt:ro
-      - ./secrets/jwt.key:/run/secrets/jwt.key:ro
-      - ./secrets/node-a/server.crt:/run/secrets/node.crt:ro
-      - ./secrets/node-a/server.key:/run/secrets/node.key:ro
+      - ./secrets-renewed/ca.crt:/run/secrets/ca.crt:ro
+      - ./secrets-renewed/jwt.key:/run/secrets/jwt.key:ro
+      - ./secrets-renewed/node-a/server.crt:/run/secrets/node.crt:ro
+      - ./secrets-renewed/node-a/server.key:/run/secrets/node.key:ro
 
   node-b:
     <<: *node
@@ -88,10 +88,10 @@ services:
       - "127.0.0.1:8442:8443"
     volumes:
       - data-b:/data
-      - ./secrets/ca.crt:/run/secrets/ca.crt:ro
-      - ./secrets/jwt.key:/run/secrets/jwt.key:ro
-      - ./secrets/node-b/server.crt:/run/secrets/node.crt:ro
-      - ./secrets/node-b/server.key:/run/secrets/node.key:ro
+      - ./secrets-renewed/ca.crt:/run/secrets/ca.crt:ro
+      - ./secrets-renewed/jwt.key:/run/secrets/jwt.key:ro
+      - ./secrets-renewed/node-b/server.crt:/run/secrets/node.crt:ro
+      - ./secrets-renewed/node-b/server.key:/run/secrets/node.key:ro
 
   node-c:
     <<: *node
@@ -116,10 +116,10 @@ services:
       - "127.0.0.1:8443:8443"
     volumes:
       - data-c:/data
-      - ./secrets/ca.crt:/run/secrets/ca.crt:ro
-      - ./secrets/jwt.key:/run/secrets/jwt.key:ro
-      - ./secrets/node-c/server.crt:/run/secrets/node.crt:ro
-      - ./secrets/node-c/server.key:/run/secrets/node.key:ro
+      - ./secrets-renewed/ca.crt:/run/secrets/ca.crt:ro
+      - ./secrets-renewed/jwt.key:/run/secrets/jwt.key:ro
+      - ./secrets-renewed/node-c/server.crt:/run/secrets/node.crt:ro
+      - ./secrets-renewed/node-c/server.key:/run/secrets/node.key:ro
 
 networks:
   peers:

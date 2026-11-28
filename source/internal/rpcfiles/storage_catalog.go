@@ -22,15 +22,21 @@ func NewStorageCatalog(store *storage.Store) (StorageCatalog, error) {
 	return StorageCatalog{store: store}, nil
 }
 
-// Snapshot returns metadata for files committed to storage.
+// Snapshot preserves the original catalogue interface for existing callers.
 func (c StorageCatalog) Snapshot() []model.FileMetadata {
+	files, _ := c.SnapshotWithError()
+	return files
+}
+
+// SnapshotWithError returns committed metadata without hiding storage errors.
+func (c StorageCatalog) SnapshotWithError() ([]model.FileMetadata, error) {
 	if c.store == nil {
-		return nil
+		return nil, errors.New("storage store is unavailable")
 	}
 
 	metadata, err := c.store.Snapshot()
 	if err != nil {
-		return nil
+		return nil, err
 	}
 
 	files := make([]model.FileMetadata, 0, len(metadata))
@@ -40,8 +46,10 @@ func (c StorageCatalog) Snapshot() []model.FileMetadata {
 			Size:         file.Size,
 			SHA256:       file.SHA256,
 			ModifiedUnix: file.ModifiedUnix,
+			Version:      file.Version,
+			WriterID:     file.WriterID,
 		})
 	}
 
-	return files
+	return files, nil
 }

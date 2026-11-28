@@ -83,3 +83,64 @@ func TestWeek04_UDPDropAndDeadline(t *testing.T) {
 		t.Fatal("UDP shutdown hung")
 	}
 }
+
+func TestWeek10_ServerClosesStalledTCPFrame(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var calls atomic.Int32
+	done := make(chan error, 1)
+
+	go func() {
+		done <- ServeTCP(ctx, ln, "node-b", 150*time.Millisecond, func(Message) {
+			calls.Add(1)
+		})
+	}()
+
+	conn, err := net.DialTimeout("tcp", ln.Addr().String(), time.Second)
+	if err != nil {
+		cancel()
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	if err := conn.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+
+	var header [4]byte
+	binary.BigEndian.PutUint32(header[:], 20)
+
+	if _, err := conn.Write(header[:]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.Write([]byte("{}")); err != nil {
+		t.Fatal(err)
+	}
+
+	var response [1]byte
+	n, err := conn.Read(response[:])
+	if err == nil || n != 0 {
+		t.Fatalf("stalled connection was not closed: n=%d err=%v", n, err)
+	}
+
+	if calls.Load() != 0 {
+		t.Fatal("incomplete frame was delivered to the message handler")
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("server shutdown failed: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("server shutdown hung")
+	}
+}

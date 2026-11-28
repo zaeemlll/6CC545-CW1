@@ -134,8 +134,14 @@ func TestWeek09_GRPCMutualTLSAndIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	jwtValidator := security.TokenValidator{
+		Key:      []byte("01234567890123456789012345678901"),
+		Issuer:   "cw2-test",
+		Audience: "cw2-test-peers",
+	}
 	server := grpc.NewServer(
 		grpc.Creds(credentials.NewTLS(serverTLS)),
+		grpc.UnaryInterceptor(security.GRPCUnary(jwtValidator, "reader")),
 		grpc.MaxRecvMsgSize(4096),
 		grpc.MaxSendMsgSize(65536),
 	)
@@ -163,12 +169,31 @@ func TestWeek09_GRPCMutualTLSAndIdentity(t *testing.T) {
 		CAFile:       ca,
 	}
 
-	_, err = Fetch(context.Background(), listener.Addr().String(), "node-b", "node-a", time.Second, clientConfig)
+	nodeAToken, err := jwtValidator.IssueReaderToken("node-a", 30*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nodeCToken, err := jwtValidator.IssueReaderToken("node-c", 30*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = FetchWithToken(context.Background(), listener.Addr().String(), "node-b", "node-a", time.Second, nodeAToken, clientConfig)
 	if err != nil {
 		t.Fatalf("trusted node-a request failed: %v", err)
 	}
 
-	_, err = Fetch(context.Background(), listener.Addr().String(), "node-b", "node-c", time.Second, clientConfig)
+	_, err = Fetch(context.Background(), listener.Addr().String(), "node-b", "node-a", time.Second, clientConfig)
+	if status.Code(err) != codes.Unauthenticated {
+		t.Fatalf("missing JWT status = %v, want Unauthenticated; error: %v", status.Code(err), err)
+	}
+
+	_, err = FetchWithToken(context.Background(), listener.Addr().String(), "node-b", "node-a", time.Second, nodeCToken, clientConfig)
+	if status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("JWT subject mismatch status = %v, want PermissionDenied; error: %v", status.Code(err), err)
+	}
+
+	_, err = FetchWithToken(context.Background(), listener.Addr().String(), "node-b", "node-c", time.Second, nodeAToken, clientConfig)
 	if status.Code(err) != codes.PermissionDenied {
 		t.Fatalf("identity mismatch status = %v, want PermissionDenied; error: %v",
 			status.Code(err), err)
@@ -179,12 +204,13 @@ func TestWeek09_GRPCMutualTLSAndIdentity(t *testing.T) {
 	untrustedConfig.TLSCertFile = untrustedCert
 	untrustedConfig.TLSKeyFile = untrustedKey
 
-	_, err = Fetch(
+	_, err = FetchWithToken(
 		context.Background(),
 		listener.Addr().String(),
 		"node-b",
 		"node-a",
 		time.Second,
+		nodeAToken,
 		untrustedConfig,
 	)
 	if err == nil {

@@ -106,3 +106,45 @@ func TestWeek03_InvalidPeer(t *testing.T) {
 		t.Fatal("invalid input changed state")
 	}
 }
+
+func TestRegistrySetStatus(t *testing.T) {
+	s := NewRegistry()
+	original := peer("node-b")
+
+	if err := s.Add(original); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.SetStatus("node-b", "online"); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.Get("node-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != "online" {
+		t.Fatalf("status = %q, want online", got.Status)
+	}
+	if got.HTTPAddress != original.HTTPAddress ||
+		got.GRPCAddress != original.GRPCAddress {
+		t.Fatal("status update changed peer addresses")
+	}
+
+	if err := s.SetStatus("node-b", "offline"); err != nil {
+		t.Fatal(err)
+	}
+
+	got, _ = s.Get("node-b")
+	if got.Status != "offline" {
+		t.Fatalf("status = %q, want offline", got.Status)
+	}
+
+	if err := s.SetStatus("node-b", "unknown"); !errors.Is(err, ErrInvalidStatus) {
+		t.Fatalf("invalid status error = %v, want ErrInvalidStatus", err)
+	}
+
+	if err := s.SetStatus("missing-node", "online"); !errors.Is(err, ErrMissing) {
+		t.Fatalf("missing peer error = %v, want ErrMissing", err)
+	}
+}

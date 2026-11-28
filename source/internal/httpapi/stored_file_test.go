@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 
@@ -280,5 +281,45 @@ func TestStoredFileRejectsInvalidUploadRequests(t *testing.T) {
 					response.Code, tc.wantStatus, response.Body.String())
 			}
 		})
+	}
+}
+
+func TestStoredFileVersionedUpload(t *testing.T) {
+	h, _ := newStoredFileTestHandler(t)
+
+	if err := h.store.EnableVersioning(h.nodeID); err != nil {
+		t.Fatalf("enable versioning: %v", err)
+	}
+	if err := h.store.Recover(context.Background()); err != nil {
+		t.Fatalf("recover versioned store: %v", err)
+	}
+
+	content := []byte("versioned upload")
+	sum := sha256.Sum256(content)
+	digest := hex.EncodeToString(sum[:])
+
+	request := httptest.NewRequest(http.MethodPost, "/v1/files/versioned.txt", bytes.NewReader(content))
+	request.Header.Set("X-File-Size", strconv.Itoa(len(content)))
+	request.Header.Set("X-File-SHA256", digest)
+
+	response := httptest.NewRecorder()
+	StoredFile(h.store, h.bus, h.nodeID, h.maxBytes).ServeHTTP(response, request)
+
+	if response.Code != http.StatusCreated {
+		t.Fatalf("upload status = %d, want %d; body: %s",
+			response.Code, http.StatusCreated, response.Body.String())
+	}
+
+	var result struct {
+		File storage.Metadata `json:"file"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+		t.Fatalf("decode upload response: %v", err)
+	}
+	if result.File.Name != "versioned.txt" ||
+		result.File.Version != 1 ||
+		result.File.WriterID != h.nodeID ||
+		result.File.SHA256 != digest {
+		t.Fatalf("unexpected versioned metadata: %+v", result.File)
 	}
 }

@@ -213,3 +213,65 @@ The following checks completed successfully:
 The certificates and shared JWT signing key are development credentials for the closed coursework environment, not production credentials. Peer registrations and message state remain in memory. The file catalogue is rebuilt from files in the configured data directory during startup recovery. Although the mTLS file-transfer helper is tested, complete automatic peer-to-peer file replication is not yet implemented. Durable peer membership is also still outstanding.
 
 I used the supplied Week 9 integration guide and coursework materials. ChatGPT assisted with explanations, troubleshooting, code review and documentation. I ran the commands and checked the reported results.
+
+## Week 10 — Final integration, membership recovery and verified file replication
+
+### Task 10.1 — Peer membership and recovery
+
+Added peer membership handling for the three-node deployment. Nodes exchange membership information and use peer identity, incarnation and expiry information to track whether other nodes are online. Membership state is persisted locally so that a node can recover its own membership information after a restart.
+
+The application refreshes membership and periodically reconciles remote file metadata. When a peer is unavailable, the remaining nodes can continue communicating with one another. After a peer returns, membership can be refreshed and reconciliation can resume.
+
+### Task 10.2 — Versioned storage and recovery
+
+Extended storage with version and writer information to support deterministic conflict decisions. Added persistent version metadata and a journal to help complete or reject interrupted commits during recovery.
+
+The commit process checks the incoming version against the existing version before replacing a file. A stale write is rejected, and the newer committed content and metadata remain intact. Recovery checks journal state, staged files and committed content before making the store available.
+
+Acceptance tests cover version persistence, journal recovery, incomplete or invalid recovery states, abandoned temporary files, cancellation and preservation of existing data. The selected storage recovery tests passed both normally and with the race detector. These tests simulate interrupted filesystem states; they do not prove recovery from physical power failure.
+
+### Task 10.3 — Authenticated metadata exchange and file transfer
+
+Integrated authenticated peer metadata retrieval with the reconciliation process. Remote metadata is checked before a transfer is planned. File content is downloaded over authenticated HTTPS using mutual TLS and is checked against the expected size, digest and version information.
+
+The transfer rejects unsupported or unapproved destinations, unexpected redirects and unsuccessful HTTP responses. Storage validates the received content before committing it. Failed, cancelled, truncated or oversized transfers must not replace an existing valid file.
+
+Added tests for transfer failures and preservation of existing content. The truncated, cancelled and oversized HTTPS download tests passed normally and with the race detector.
+
+### Task 10.4 — Event handling, bounded work and shutdown
+
+Integrated event forwarding and application lifecycle handling with the final system. Event subscribers use bounded queues and support cancellation and coordinated shutdown. Reconciliation runs periodically and processes transfers sequentially, keeping the number of simultaneous reconciliation transfers bounded. Failed reconciliation work can be attempted again during a later cycle.
+
+Added tests for concurrent event operations, stalled TCP frames, runtime cancellation and shutdown. The event acceptance tests passed with the race detector.
+
+### Task 10.5 — Three-node deployment and live acceptance
+
+Used the secure Docker Compose configuration to run node-a, node-b and node-c with separate data volumes and node certificates. All three nodes passed their TLS health checks. Protected API requests without valid authentication were rejected, and authenticated peer requests succeeded.
+
+Stopped node-a while node-b and node-c remained running. The surviving nodes detected the unavailable peer and continued communicating. Node-b successfully retrieved remote metadata from node-c during this period. After node-a restarted, it became healthy and the other nodes were visible again.
+
+Also tested actual file-content replication. A file uploaded to node-a was downloaded and verified on node-b and node-c. While node-a was stopped, node-b uploaded a second file and node-c downloaded it. After node-a restarted, it also downloaded and verified that second file. The evidence record contains the observed HTTP results, file sizes, hashes and test details.
+
+### Task 10.6 — Final verification results
+
+The following commands completed successfully after the Week 10 changes:
+
+- `git diff --check`
+- `go test ./... -count=1 -timeout 120s`
+- `go test -tags acceptance ./... -count=1 -timeout 120s`
+- `go test -race -tags acceptance ./... -count=1 -timeout 180s`
+- `go vet ./...`
+- `go mod verify`
+- `docker compose -f ../compose.secure.yaml config --quiet`
+
+All packages containing tests passed. The race-enabled acceptance suite reported no race warnings. Static analysis and module verification completed without errors, and Docker Compose configuration validation succeeded.
+
+The detailed commands, outputs and live test results are recorded in `evidence/week10/evidence-record.md`.
+
+### Limitations
+
+The certificates and shared JWT signing key are development credentials for the coursework environment, not production credentials. Membership information is persisted locally, but event and message history is not a fully replicated durable history. Reconciliation is periodic and sequential; it does not provide distributed consensus or guarantee that every possible concurrent conflict or network failure will be resolved.
+
+The live deployment tests covered the observed loss and recovery of node-a while node-b and node-c remained running. They did not test every combination of simultaneous node failures, network partitions or hardware failures. Storage recovery tests simulated interrupted filesystem states rather than physical power loss. The results therefore support the tested coursework scenarios, not a claim of production readiness or universal crash durability.
+
+I used the supplied CW2 coursework brief, Week 10 workbook, integration guidance and project materials. ChatGPT assisted with explanations, troubleshooting, test planning and documentation. I ran the commands and checked the reported results.

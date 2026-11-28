@@ -62,3 +62,29 @@ func (s *Registry) Get(id string) (model.Peer, error) {
 
 	return p, nil
 }
+
+// ErrInvalidStatus is returned when a registry status is not online or offline.
+var ErrInvalidStatus = errors.New("invalid peer status")
+
+// SetStatus updates the status of an existing registered peer.
+func (s *Registry) SetStatus(id, status string) error {
+	if status != "online" && status != "offline" {
+		return ErrInvalidStatus
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	p, exists := s.peers[id]
+	if !exists {
+		return ErrMissing
+	}
+
+	p.Status = status
+	if err := p.Validate(); err != nil {
+		return err
+	}
+
+	s.peers[id] = p
+	return nil
+}

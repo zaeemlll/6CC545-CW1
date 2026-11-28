@@ -2,6 +2,7 @@ package peerfiles
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -110,6 +111,10 @@ func Upload(
 	request.ContentLength = metadata.Size
 	request.Header.Set("X-File-Size", strconv.FormatInt(metadata.Size, 10))
 	request.Header.Set("X-File-SHA256", metadata.SHA256)
+	if source.VersioningEnabled() {
+		request.Header.Set("X-File-Version", strconv.FormatUint(metadata.Version, 10))
+		request.Header.Set("X-File-Writer-ID", metadata.WriterID)
+	}
 	request.Header.Set("Content-Type", "application/octet-stream")
 
 	response, err := client.Do(request)
@@ -136,6 +141,34 @@ func Download(
 	timeout time.Duration,
 	c config.Config,
 ) (storage.Metadata, error) {
+	return download(ctx, peerURL, peerID, name, destination, timeout, c, nil)
+}
+
+// DownloadExpected verifies the HTTPS response against metadata obtained earlier
+// from the peer before allowing the file to be committed.
+func DownloadExpected(
+	ctx context.Context,
+	peerURL string,
+	peerID string,
+	name string,
+	destination *storage.Store,
+	timeout time.Duration,
+	c config.Config,
+	expected storage.Metadata,
+) (storage.Metadata, error) {
+	return download(ctx, peerURL, peerID, name, destination, timeout, c, &expected)
+}
+
+func download(
+	ctx context.Context,
+	peerURL string,
+	peerID string,
+	name string,
+	destination *storage.Store,
+	timeout time.Duration,
+	c config.Config,
+	expected *storage.Metadata,
+) (storage.Metadata, error) {
 	if ctx == nil {
 		return storage.Metadata{}, errors.New("operation context is required")
 	}
@@ -144,6 +177,19 @@ func Download(
 	}
 	if err := storage.ValidateName(name); err != nil {
 		return storage.Metadata{}, err
+	}
+	if expected != nil {
+		if !destination.VersioningEnabled() {
+			return storage.Metadata{}, errors.New("expected metadata requires versioned destination storage")
+		}
+		if expected.Name != name || expected.Size < 0 ||
+			expected.Version == 0 || !config.ValidID(expected.WriterID) ||
+			len(expected.SHA256) != 64 {
+			return storage.Metadata{}, errors.New("invalid expected file metadata")
+		}
+		if _, err := hex.DecodeString(expected.SHA256); err != nil {
+			return storage.Metadata{}, errors.New("invalid expected file digest")
+		}
 	}
 
 	client, endpoint, err := newClient(peerURL, peerID, timeout, c)
@@ -189,8 +235,33 @@ func Download(
 	if len(digest) != 64 {
 		return storage.Metadata{}, errors.New("peer returned an invalid file digest")
 	}
+	if _, err := hex.DecodeString(digest); err != nil {
+		return storage.Metadata{}, errors.New("peer returned an invalid file digest")
+	}
+	if expected != nil &&
+		(size != expected.Size || !strings.EqualFold(digest, expected.SHA256)) {
+		return storage.Metadata{}, errors.New("downloaded file content metadata differs from advertised metadata")
+	}
 
-	metadata, err := destination.Put(opCtx, name, response.Body, size, digest)
+	var metadata storage.Metadata
+	if destination.VersioningEnabled() {
+		version, parseErr := strconv.ParseUint(response.Header.Get("X-File-Version"), 10, 64)
+		writerID := response.Header.Get("X-File-Writer-ID")
+		if parseErr != nil || version == 0 || !config.ValidID(writerID) {
+			return storage.Metadata{}, errors.New("peer returned invalid file version metadata")
+		}
+		if expected != nil &&
+			(version != expected.Version || writerID != expected.WriterID) {
+			return storage.Metadata{}, errors.New("downloaded file version metadata differs from advertised metadata")
+		}
+
+		metadata, err = destination.PutVersioned(opCtx, name, response.Body, storage.Metadata{
+			Name: name, Size: size, SHA256: digest,
+			Version: version, WriterID: writerID,
+		})
+	} else {
+		metadata, err = destination.Put(opCtx, name, response.Body, size, digest)
+	}
 	if err != nil {
 		return storage.Metadata{}, fmt.Errorf("verify and store downloaded file: %w", err)
 	}

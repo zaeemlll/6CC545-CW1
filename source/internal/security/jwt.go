@@ -115,3 +115,36 @@ func Require(v TokenValidator, requiredRole string, next http.Handler) http.Hand
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
+
+// IssueReaderToken creates a short-lived token for internal metadata reads.
+func (v TokenValidator) IssueReaderToken(subject string, ttl time.Duration) (string, error) {
+	if len(v.Key) < 32 || v.Issuer == "" || v.Audience == "" {
+		return "", errors.New("invalid JWT signing configuration")
+	}
+	if strings.TrimSpace(subject) == "" {
+		return "", errors.New("JWT subject is required")
+	}
+	if ttl <= 0 || ttl > time.Minute {
+		return "", errors.New("reader token lifetime must be between 0 and 1 minute")
+	}
+
+	now := time.Now()
+	if v.Now != nil {
+		now = v.Now()
+	}
+
+	claims := Claims{
+		Role: "reader",
+		RegisteredClaims: jwt.RegisteredClaims{
+			Subject:   subject,
+			Issuer:    v.Issuer,
+			Audience:  jwt.ClaimStrings{v.Audience},
+			IssuedAt:  jwt.NewNumericDate(now),
+			NotBefore: jwt.NewNumericDate(now),
+			ExpiresAt: jwt.NewNumericDate(now.Add(ttl)),
+		},
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString(v.Key)
+}

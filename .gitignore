@@ -15,3 +15,6 @@
 **/*.cer
 **/*.p12
 **/*.pfx
+
+# Renewed private CW2 lab credentials.
+/secrets-renewed/

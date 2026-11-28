@@ -33,13 +33,15 @@ func GRPCUnary(v TokenValidator, requiredRole string) grpc.UnaryServerIntercepto
 			return nil, status.Error(codes.Unauthenticated, "invalid bearer token")
 		}
 
-		if _, err := v.Validate(raw, requiredRole); err != nil {
+		claims, err := v.Validate(raw, requiredRole)
+		if err != nil {
 			if errors.Is(err, ErrForbidden) {
 				return nil, status.Error(codes.PermissionDenied, "insufficient permissions")
 			}
 			return nil, status.Error(codes.Unauthenticated, "invalid bearer token")
 		}
 
+		ctx = context.WithValue(ctx, privateContextKey{}, claims)
 		return handler(ctx, req)
 	}
 }
